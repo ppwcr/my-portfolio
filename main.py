@@ -41,6 +41,10 @@ except Exception:
 # Simple cache for symbol data to avoid repeated yfinance calls
 symbol_cache = {}
 
+# Simple lock for serializing yfinance requests to prevent concurrent access issues
+import threading
+yfinance_lock = threading.Lock()
+
 
 # Initialize FastAPI app
 app = FastAPI(title="SET Data Export API", version="1.0.0")
@@ -276,7 +280,7 @@ def get_symbol_series(symbol: str):
             # Add a delay to prevent rate limiting and allow cache to clear
             import time
             time.sleep(0.5)  # Increased delay for better cache clearing
-            
+                
             # Clear any potential yfinance cache more aggressively
             try:
                 import yfinance as yf_module
@@ -291,8 +295,10 @@ def get_symbol_series(symbol: str):
                     yf_module.session = None
             except:
                 pass
-                
-            df = yf.download(symbol, period="1y", interval="1d", progress=False)
+            
+            # Use lock to serialize yfinance requests and prevent concurrent access issues
+            with yfinance_lock:
+                df = yf.download(symbol, period="1y", interval="1d", progress=False)
             
             # Debug: Check if we got the right data
             if not df.empty:
@@ -303,26 +309,22 @@ def get_symbol_series(symbol: str):
                     
                     # Check if we got the wrong symbol's data by looking at the ticker name in the data
                     if str(first_value).startswith('Ticker'):
-                        ticker_name = str(first_value).split('\n')[0].replace('Ticker', '').strip()
-                        if ticker_name and ticker_name != symbol:
-                            print(f"⚠️  Wrong symbol data detected for {symbol} (got {ticker_name}), retrying...")
+                        # Parse the ticker name from the string representation
+                        first_value_str = str(first_value)
+                        lines = first_value_str.split('\n')
+                        ticker_in_data = None
+                        
+                        for line in lines:
+                            line = line.strip()
+                            if line and not line.startswith('Ticker') and not line.startswith('Name:') and not line.startswith('dtype:'):
+                                # Extract just the ticker name (before any spaces/values)
+                                ticker_in_data = line.split()[0] if line.split() else None
+                                break
+                        
+                        if ticker_in_data and ticker_in_data != symbol:
+                            print(f"⚠️  Wrong symbol data detected for {symbol} (got {ticker_in_data}), retrying...")
                             if attempt < max_retries - 1:
                                 continue
-                    
-                    # Additional check: if the first value contains a different ticker name
-                    first_value_str = str(first_value)
-                    if 'Ticker' in first_value_str:
-                        # Extract ticker name from the string representation
-                        lines = first_value_str.split('\n')
-                        for line in lines:
-                            if line.strip() and not line.startswith('Ticker') and not line.startswith('Name:') and not line.startswith('dtype:'):
-                                # This should be the ticker name
-                                ticker_in_data = line.strip()
-                                if ticker_in_data != symbol:
-                                    print(f"⚠️  Wrong symbol data detected for {symbol} (data shows {ticker_in_data}), retrying...")
-                                    if attempt < max_retries - 1:
-                                        continue
-                                    break
                         
                 except Exception as e:
                     print(f"🔍 {symbol}: debug error - {e}")
