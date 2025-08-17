@@ -103,8 +103,11 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button id="update-database-btn" class="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors">
-                        Update Database
+                    <button id="update-database-btn" class="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors" title="Fast update using existing files">
+                        Quick Update
+                    </button>
+                    <button id="update-database-full-btn" class="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition-colors" title="Full update with fresh downloads">
+                        Full Update
                     </button>
                     <button id="debug-components-btn" class="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors">
                         Debug Components
@@ -1295,10 +1298,10 @@
             return es;
         }
 
-        async function saveToDatabase() {
+        async function saveToDatabase(endpoint = '/api/save-to-database') {
             const es = startDbProgress();
             try {
-                const res = await fetch('/api/save-to-database', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
                     throw new Error(err.detail?.message || err.detail?.error || 'Update failed');
@@ -1735,6 +1738,31 @@
                 } catch (err) {
                     console.error('Manual database update failed:', err);
                     showStatus('❌', 'Database update failed', err.message || 'Please check console for details', 'error');
+                    // Do NOT auto-hide - keep error visible until next update
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            });
+
+            // Full Update Database button functionality (with fresh downloads)
+            document.getElementById('update-database-full-btn').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                const originalText = btn.textContent;
+                
+                btn.disabled = true;
+                btn.textContent = 'Updating...';
+                
+                // Show initial status
+                showStatus('🚀', 'Starting full database update...', 'Downloading fresh data...', 'info');
+                
+                try {
+                    // Use the full update endpoint that downloads fresh files
+                    await saveToDatabase('/api/save-to-database-full');
+                    
+                } catch (err) {
+                    console.error('Full database update failed:', err);
+                    showStatus('❌', 'Full database update failed', err.message || 'Please check console for details', 'error');
                     // Do NOT auto-hide - keep error visible until next update
                 } finally {
                     btn.disabled = false;

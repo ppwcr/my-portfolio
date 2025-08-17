@@ -837,7 +837,7 @@ async def auto_update_database():
 
 
 @app.post("/api/save-to-database")
-async def save_to_database():
+async def save_to_database(download_fresh: bool = False):
     """Save investor type (SET market) and all sector data to Supabase database"""
     try:
         # Initialize progress
@@ -960,67 +960,95 @@ async def save_to_database():
                 results["sector_data"][sector_name] = False
                 update_progress("running", "sector_processing", int(progress_pct), f"Error {sector_name}")
         
-        # Step 3: Download and save NVDR data
-        update_progress("running", "nvdr_downloading", 90, "Downloading NVDR Excel file...")
-        
-        nvdr_output_path = OUTPUT_DIR / ts_name("nvdr", "xlsx")
-        nvdr_cmd = [sys.executable, "download_nvdr_excel.py", "--out", str(nvdr_output_path)]
-        
-        # Add Windows-specific flags
-        if os.getenv("HEADFUL") == "1":
-            nvdr_cmd.append("--headful")
-        if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
-            nvdr_cmd.append("--no-sandbox")  # Always use --no-sandbox on Windows
-        
-        nvdr_exit_code, nvdr_stdout, nvdr_stderr = await run_cmd(nvdr_cmd, timeout=60)
-        
-        if nvdr_exit_code == 0 and nvdr_output_path.exists():
-            update_progress("running", "nvdr_processing", 93, "Processing NVDR data...")
-            results["nvdr_data"] = db.save_nvdr_trading(str(nvdr_output_path), trade_date)
-            if results["nvdr_data"]:
-                update_progress("running", "nvdr_saved", 93, "NVDR data saved")
+        # Step 3: Process NVDR data (download fresh or use existing)
+        if download_fresh:
+            update_progress("running", "nvdr_downloading", 90, "Downloading fresh NVDR Excel file...")
+            
+            nvdr_output_path = OUTPUT_DIR / ts_name("nvdr", "xlsx")
+            nvdr_cmd = [sys.executable, "download_nvdr_excel.py", "--out", str(nvdr_output_path)]
+            
+            # Add Windows-specific flags
+            if os.getenv("HEADFUL") == "1":
+                nvdr_cmd.append("--headful")
+            if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
+                nvdr_cmd.append("--no-sandbox")
+            
+            nvdr_exit_code, nvdr_stdout, nvdr_stderr = await run_cmd(nvdr_cmd, timeout=60)
+            
+            if nvdr_exit_code == 0 and nvdr_output_path.exists():
+                update_progress("running", "nvdr_processing", 93, "Processing NVDR data...")
+                results["nvdr_data"] = db.save_nvdr_trading(str(nvdr_output_path), trade_date)
+                if results["nvdr_data"]:
+                    update_progress("running", "nvdr_saved", 93, "NVDR data saved")
+                else:
+                    update_progress("running", "nvdr_failed", 93, "Failed to save NVDR data to database")
             else:
-                update_progress("running", "nvdr_failed", 93, "Failed to save NVDR data to database")
+                error_msg = f"NVDR download failed (exit_code: {nvdr_exit_code})"
+                if nvdr_stderr:
+                    error_msg += f" - {stderr_tail(nvdr_stderr)}"
+                update_progress("running", "nvdr_failed", 93, error_msg)
+                print(f"❌ NVDR download failed: {error_msg}")
+                print(f"   stdout: {nvdr_stdout}")
+                print(f"   stderr: {nvdr_stderr}")
+                results["nvdr_data"] = False
         else:
-            error_msg = f"NVDR download failed (exit_code: {nvdr_exit_code})"
-            if nvdr_stderr:
-                error_msg += f" - {stderr_tail(nvdr_stderr)}"
-            update_progress("running", "nvdr_failed", 93, error_msg)
-            print(f"❌ NVDR download failed: {error_msg}")
-            print(f"   stdout: {nvdr_stdout}")
-            print(f"   stderr: {nvdr_stderr}")
-            results["nvdr_data"] = False
-        
-        # Step 4: Download and save Short Sales data
-        update_progress("running", "shortsales_downloading", 95, "Downloading Short Sales Excel file...")
-        
-        short_output_path = OUTPUT_DIR / ts_name("short_sales", "xlsx")
-        short_cmd = [sys.executable, "download_short_sales_excel.py", "--out", str(short_output_path)]
-        
-        # Add Windows-specific flags
-        if os.getenv("HEADFUL") == "1":
-            short_cmd.append("--headful")
-        if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
-            short_cmd.append("--no-sandbox")  # Always use --no-sandbox on Windows
-        
-        short_exit_code, short_stdout, short_stderr = await run_cmd(short_cmd, timeout=60)
-        
-        if short_exit_code == 0 and short_output_path.exists():
-            update_progress("running", "shortsales_processing", 97, "Processing Short Sales data...")
-            results["short_sales_data"] = db.save_short_sales_trading(str(short_output_path), trade_date)
-            if results["short_sales_data"]:
-                update_progress("running", "shortsales_saved", 98, "Short Sales data saved")
+            # Fast mode: Use existing NVDR files
+            update_progress("running", "nvdr_processing", 93, "Processing existing NVDR data...")
+            if nvdr_files:
+                latest_nvdr = nvdr_files[-1]
+                results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), trade_date)
+                if results["nvdr_data"]:
+                    update_progress("running", "nvdr_saved", 93, "NVDR data saved")
+                else:
+                    update_progress("running", "nvdr_failed", 93, "Failed to save NVDR data")
             else:
-                update_progress("running", "shortsales_failed", 98, "Failed to save Short Sales data to database")
+                update_progress("running", "nvdr_skipped", 93, "No NVDR files found")
+                results["nvdr_data"] = False
+        
+        # Step 4: Process Short Sales data (download fresh or use existing)
+        if download_fresh:
+            update_progress("running", "shortsales_downloading", 95, "Downloading fresh Short Sales Excel file...")
+            
+            short_output_path = OUTPUT_DIR / ts_name("short_sales", "xlsx")
+            short_cmd = [sys.executable, "download_short_sales_excel.py", "--out", str(short_output_path)]
+            
+            # Add Windows-specific flags
+            if os.getenv("HEADFUL") == "1":
+                short_cmd.append("--headful")
+            if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
+                short_cmd.append("--no-sandbox")
+            
+            short_exit_code, short_stdout, short_stderr = await run_cmd(short_cmd, timeout=60)
+            
+            if short_exit_code == 0 and short_output_path.exists():
+                update_progress("running", "shortsales_processing", 97, "Processing Short Sales data...")
+                results["short_sales_data"] = db.save_short_sales_trading(str(short_output_path), trade_date)
+                if results["short_sales_data"]:
+                    update_progress("running", "shortsales_saved", 98, "Short Sales data saved")
+                else:
+                    update_progress("running", "shortsales_failed", 98, "Failed to save Short Sales data to database")
+            else:
+                error_msg = f"Short Sales download failed (exit_code: {short_exit_code})"
+                if short_stderr:
+                    error_msg += f" - {stderr_tail(short_stderr)}"
+                update_progress("running", "shortsales_failed", 98, error_msg)
+                print(f"❌ Short Sales download failed: {error_msg}")
+                print(f"   stdout: {short_stdout}")
+                print(f"   stderr: {short_stderr}")
+                results["short_sales_data"] = False
         else:
-            error_msg = f"Short Sales download failed (exit_code: {short_exit_code})"
-            if short_stderr:
-                error_msg += f" - {stderr_tail(short_stderr)}"
-            update_progress("running", "shortsales_failed", 98, error_msg)
-            print(f"❌ Short Sales download failed: {error_msg}")
-            print(f"   stdout: {short_stdout}")
-            print(f"   stderr: {short_stderr}")
-            results["short_sales_data"] = False
+            # Fast mode: Use existing Short Sales files
+            update_progress("running", "shortsales_processing", 95, "Processing existing Short Sales data...")
+            if short_sales_files:
+                latest_short = short_sales_files[-1]
+                results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), trade_date)
+                if results["short_sales_data"]:
+                    update_progress("running", "shortsales_saved", 98, "Short Sales data saved")
+                else:
+                    update_progress("running", "shortsales_failed", 98, "Failed to save Short Sales data")
+            else:
+                update_progress("running", "shortsales_skipped", 98, "No Short Sales files found")
+                results["short_sales_data"] = False
         
         # Final results with detailed analysis
         sector_success = all(results["sector_data"].values()) if results["sector_data"] else False
@@ -1088,6 +1116,12 @@ async def save_to_database():
                 "error_type": type(e).__name__
             }
         )
+
+
+@app.post("/api/save-to-database-full")
+async def save_to_database_full():
+    """Save to database with fresh downloads (slower but complete)"""
+    return await save_to_database(download_fresh=True)
 
 
 @app.post("/api/test-update-database")
