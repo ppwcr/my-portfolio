@@ -38,9 +38,7 @@ try:
 except Exception:
     HAS_YF = False
 
-# Simple cache for symbol data to avoid repeated yfinance calls
-symbol_cache = {}
-CACHE_EXPIRY_HOURS = 8  # Cache expires after 8 hours
+# Removed cache system to avoid data mixing issues
 
 # Simple lock for serializing yfinance requests to prevent concurrent access issues
 import threading
@@ -216,6 +214,38 @@ def get_set_index_series():
         if df.empty:
             return JSONResponse(status_code=502, content={"error": "No data from source"})
 
+        # Verify this is actually SET index data (should be around 1200-1400 range)
+        latest_close = float(df.iloc[-1]["Close"])
+        if latest_close < 500 or latest_close > 2000:
+            print(f"⚠️  Suspicious SET index value: {latest_close}, this might be wrong data")
+            # Try to get fresh data by clearing any potential cache
+            if HAS_YF:
+                try:
+                    import yfinance as yf_module
+                    yf_module.cache.clear()
+                    yf_module.session.cache.clear()
+                    yf_module.session.close()
+                    yf_module.session = None
+                    time.sleep(0.5)
+                    
+                    print("🔄 Retrying SET index with fresh session...")
+                    df = yf.download("^SET.BK", period="max", interval="1d", progress=False)
+                    if df is not None and not df.empty:
+                        df = df.reset_index()
+                        if isinstance(df.columns, pd.MultiIndex):
+                            new_columns = []
+                            for col in df.columns:
+                                if col[0] == 'Date':
+                                    new_columns.append('Date')
+                                else:
+                                    new_columns.append(col[0])
+                            df.columns = new_columns
+                        df = df.dropna(subset=["Close"]).sort_values("Date")
+                        latest_close = float(df.iloc[-1]["Close"])
+                        print(f"🔄 Retry result: {latest_close}")
+                except Exception as retry_error:
+                    print(f"⚠️  SET index retry failed: {retry_error}")
+
         series = [
             {"time": d.strftime("%Y-%m-%d"), "value": float(c)}
             for d, c in zip(df["Date"], df["Close"]) if pd.notna(c)
@@ -259,24 +289,7 @@ def get_symbol_series(symbol: str):
         }
       }
     """
-    # Check cache first
-    if symbol in symbol_cache:
-        cached_entry = symbol_cache[symbol]
-        cached_data = cached_entry['data']
-        cached_time = cached_entry['timestamp']
-        
-        # Check if cache is still valid (8 hours)
-        from datetime import datetime, timedelta
-        current_time = datetime.now()
-        cache_age = current_time - cached_time
-        
-        if cache_age < timedelta(hours=CACHE_EXPIRY_HOURS):
-            print(f"📋 Using cached data for {symbol} (age: {cache_age.total_seconds()/3600:.1f}h)")
-            return JSONResponse(content=cached_data)
-        else:
-            print(f"⏰ Cache expired for {symbol} (age: {cache_age.total_seconds()/3600:.1f}h), fetching fresh data")
-            # Remove expired cache entry
-            del symbol_cache[symbol]
+    # Removed cache logic to avoid data mixing issues
     
     max_retries = 3
     for attempt in range(max_retries):
@@ -407,14 +420,7 @@ def get_symbol_series(symbol: str):
 
             print(f"✅ Successfully fetched data for {symbol} on attempt {attempt + 1}")
             
-            # Cache the successful result with timestamp
-            from datetime import datetime
             result_data = {"series": series, "latest": latest}
-            symbol_cache[symbol] = {
-                'data': result_data,
-                'timestamp': datetime.now()
-            }
-            
             return JSONResponse(content=result_data)
             
         except Exception as e:
@@ -424,67 +430,7 @@ def get_symbol_series(symbol: str):
             return JSONResponse(status_code=500, content={"error": f"Failed to fetch data for {symbol}", "message": str(e)})
 
 
-@app.post("/api/series/symbol/cache/clear")
-def clear_symbol_cache():
-    """Clear the symbol data cache"""
-    global symbol_cache
-    symbol_cache.clear()
-    print("🗑️  Symbol cache cleared")
-    return JSONResponse(content={"message": "Symbol cache cleared successfully"})
-
-
-@app.post("/api/series/symbol/cache/expire")
-def expire_symbol_cache():
-    """Expire all cache entries (for testing)"""
-    global symbol_cache
-    from datetime import datetime, timedelta
-    
-    # Set all timestamps to be expired
-    current_time = datetime.now()
-    expired_time = current_time - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
-    
-    for symbol in symbol_cache:
-        symbol_cache[symbol]['timestamp'] = expired_time
-    
-    print("⏰ All cache entries expired")
-    return JSONResponse(content={"message": "All cache entries expired successfully"})
-
-
-@app.get("/api/series/symbol/cache/status")
-def get_cache_status():
-    """Get the current cache status"""
-    global symbol_cache
-    from datetime import datetime, timedelta
-    
-    # Clean up expired cache entries
-    current_time = datetime.now()
-    expired_symbols = []
-    
-    for symbol, entry in symbol_cache.items():
-        cache_age = current_time - entry['timestamp']
-        if cache_age >= timedelta(hours=CACHE_EXPIRY_HOURS):
-            expired_symbols.append(symbol)
-    
-    # Remove expired entries
-    for symbol in expired_symbols:
-        del symbol_cache[symbol]
-        print(f"🧹 Removed expired cache for {symbol}")
-    
-    cache_info = {}
-    for symbol, entry in symbol_cache.items():
-        cache_age = current_time - entry['timestamp']
-        cache_info[symbol] = {
-            'age_hours': round(cache_age.total_seconds() / 3600, 1),
-            'expires_in_hours': round((CACHE_EXPIRY_HOURS * 3600 - cache_age.total_seconds()) / 3600, 1)
-        }
-    
-    return JSONResponse(content={
-        "cached_symbols": list(symbol_cache.keys()),
-        "cache_size": len(symbol_cache),
-        "cache_expiry_hours": CACHE_EXPIRY_HOURS,
-        "cache_details": cache_info,
-        "expired_removed": len(expired_symbols)
-    })
+# Removed cache endpoints to avoid data mixing issues
 
 
 @app.get("/portfolio", response_class=HTMLResponse)

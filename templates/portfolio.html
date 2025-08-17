@@ -241,8 +241,8 @@
                         <tr class="border-b bg-white/70">
                             <th class="py-2 px-3 text-left">Symbol</th>
                             <th class="py-2 px-3 text-left">Sector</th>
-                            <th class="py-2 px-3 text-right">ราคาปิด</th>
                             <th class="py-2 px-3 text-right">Change</th>
+                            <th class="py-2 px-3 text-right">ราคาปิด</th>
                             <th class="py-2 px-3 text-right">% Change</th>
                             <th class="py-2 px-3 text-right">NVDR (Baht)</th>
                             <th class="py-2 px-3 text-right">Short Sales (Baht)</th>
@@ -265,7 +265,34 @@
         </section>
 
         <!-- Search Bar (for All Symbols) with Column Headers -->
-        <section id="all-symbols-search" class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-t-2xl border border-blue-200 shadow mt-2">
+        <section id="all-symbols-search" class="all-symbols sticky top-2 z-10 bg-white/90 backdrop-blur rounded-t-2xl border border-blue-200 shadow mt-2">
+            <style>
+                /* Equal column widths for perfect header-content alignment */
+                .all-symbols {
+                    --col-width: 12.5%; /* 8 columns = 12.5% each */
+                }
+                
+                .all-symbols .header-col {
+                    width: var(--col-width) !important;
+                    flex: 0 0 var(--col-width) !important;
+                }
+                
+                .all-symbols table {
+                    table-layout: fixed !important;
+                    width: 100% !important;
+                }
+                
+                .all-symbols col {
+                    width: var(--col-width) !important;
+                }
+                
+                .all-symbols td {
+                    width: var(--col-width) !important;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+                .table-container { scrollbar-gutter: stable both-edges; }
+            </style>
             <div class="p-3 border-b border-blue-200">
                 <div class="flex items-center justify-between gap-3 mb-2">
                     <h2 class="text-sm font-semibold">All Symbols</h2>
@@ -286,53 +313,63 @@
                 </div>
             </div>
             <!-- Column Headers integrated into search bar -->
-            <div class="px-3 py-2 bg-white/70 border-b border-slate-200">
+            <div class="bg-white/70 border-b border-slate-200">
                 <div class="flex items-center text-sm font-medium text-slate-700">
-                    <div class="py-1 px-0 flex-1 text-left sortable cursor-pointer" data-key="symbol">
+                    <div class="header-col py-2 px-3 text-left sortable cursor-pointer whitespace-nowrap" data-key="symbol">
                         <span class="inline-flex items-center gap-1">
                             Symbol
                             <span class="text-xs opacity-30" id="sort-symbol">↕</span>
                         </span>
                     </div>
-                    <div class="py-1 px-3 w-20 text-left">Sector</div>
-                    <div class="py-1 px-3 w-20 text-right sortable cursor-pointer" data-key="close">
-                        <span class="inline-flex items-center gap-1">
-                            ราคาปิด
-                            <span class="text-xs opacity-30" id="sort-close">↕</span>
-                        </span>
-                    </div>
-                    <div class="py-1 px-3 w-20 text-right sortable cursor-pointer" data-key="change">
-                        <span class="inline-flex items-center gap-1">
+                    <div class="header-col py-2 px-3 text-left whitespace-nowrap">Sector</div>
+                    <div class="header-col py-2 px-3 text-right sortable cursor-pointer whitespace-nowrap" data-key="change">
+                        <span class="inline-flex items-center gap-1 justify-end">
                             Change
                             <span class="text-xs opacity-30" id="sort-change">↕</span>
                         </span>
                     </div>
-                    <div class="py-1 px-3 w-24 text-right sortable cursor-pointer" data-key="pct_change">
-                        <span class="inline-flex items-center gap-1">
+                    <div class="header-col py-2 px-3 text-right sortable cursor-pointer whitespace-nowrap" data-key="close">
+                        <span class="inline-flex items-center gap-1 justify-end">
+                            ราคาปิด
+                            <span class="text-xs opacity-30" id="sort-close">↕</span>
+                        </span>
+                    </div>
+                    <div class="header-col py-2 px-3 text-right sortable cursor-pointer whitespace-nowrap" data-key="pct_change">
+                        <span class="inline-flex items-center gap-1 justify-end">
                             % Change
                             <span class="text-xs opacity-30" id="sort-pct_change">↕</span>
                         </span>
                     </div>
-                    <div class="py-1 px-3 w-28 text-right sortable cursor-pointer" data-key="nvdr_baht">
-                        <span class="inline-flex items-center gap-1">
+                    <div class="header-col py-2 px-3 text-right sortable cursor-pointer whitespace-nowrap" data-key="nvdr_baht">
+                        <span class="inline-flex items-center gap-1 justify-end">
                             NVDR (Baht)
                             <span class="text-xs opacity-30" id="sort-nvdr_baht">↕</span>
                         </span>
                     </div>
-                    <div class="py-1 px-3 w-32 text-right sortable cursor-pointer" data-key="shortBaht">
-                        <span class="inline-flex items-center gap-1">
+                    <div class="header-col py-2 px-3 text-right sortable cursor-pointer whitespace-nowrap" data-key="shortBaht">
+                        <span class="inline-flex items-center gap-1 justify-end">
                             Short Sales (Baht)
                             <span class="text-xs opacity-30" id="sort-shortBaht">↕</span>
                         </span>
                     </div>
-                    <div class="py-1 px-3 w-20 text-center">Portfolio</div>
+                    <div class="header-col py-2 px-3 text-center whitespace-nowrap">Portfolio</div>
                 </div>
             </div>
         </section>
 
         <!-- Main Portfolio Table -->
-        <div class="table-container overflow-x-auto rounded-b-2xl shadow bg-white/80">
-            <table class="w-full text-sm">
+        <div class="table-container all-symbols overflow-x-auto rounded-b-2xl shadow bg-white/80">
+            <table class="w-full text-sm table-fixed">
+                <colgroup>
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                    <col class="content-col" />
+                </colgroup>
                 <tbody id="portfolio-tbody">
                     <!-- Portfolio data will be populated here -->
                 </tbody>
@@ -365,8 +402,7 @@
         let searchQuery = '';
         
         // Chart management
-        let loadedCharts = new Set(); // Track which charts are already loaded
-        let chartLoadingPromises = new Map(); // Track loading promises to avoid duplicates
+        // Removed caching system to avoid issues
 
         // Utility functions
         function fmt(n, frac = 2) {
@@ -660,8 +696,16 @@
                 const result = await response.json();
                 if (result.success) {
                     portfolioSymbols.add(symbol);
-                    await refreshMyPortfolio();
-                    renderPortfolioTable(portfolioData); // Re-render to update buttons
+                    
+                    // Only refresh portfolio data, don't reload all charts
+                    const portfolioData = await fetchMyPortfolio();
+                    if (portfolioData) {
+                        myPortfolioData = portfolioData.portfolio_stocks || [];
+                        portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                        
+                        // Only render the portfolio table, charts will be handled by renderMyPortfolio
+                        renderMyPortfolio(myPortfolioData);
+                    }
                 }
                 return result;
             } catch (error) {
@@ -682,8 +726,15 @@
                     // Remove chart completely
                     removeChart(symbol);
                     
-                    await refreshMyPortfolio();
-                    renderPortfolioTable(portfolioData); // Re-render to update buttons
+                    // Only refresh portfolio data, don't reload all charts
+                    const portfolioData = await fetchMyPortfolio();
+                    if (portfolioData) {
+                        myPortfolioData = portfolioData.portfolio_stocks || [];
+                        portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                        
+                        // Only render the portfolio table, charts will be handled by renderMyPortfolio
+                        renderMyPortfolio(myPortfolioData);
+                    }
                 }
                 return result;
             } catch (error) {
@@ -701,18 +752,8 @@
             }
         }
         
-        // Clear all charts (for full refresh)
-        function clearAllCharts() {
-            loadedCharts.clear();
-            chartLoadingPromises.clear();
-            console.log('🗑️ All charts cleared');
-        }
-        
-        // Remove chart for a specific symbol
+        // Remove chart for a specific symbol (simple cleanup)
         function removeChart(symbol) {
-            loadedCharts.delete(symbol);
-            chartLoadingPromises.delete(symbol);
-            
             // Remove chart elements from DOM
             const chartElement = document.getElementById(`chart-${symbol}`);
             const loadingElement = document.getElementById(`loading-${symbol}`);
@@ -858,8 +899,8 @@
                 <tr class="border-b last:border-b-0 hover:bg-slate-50">
                     <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
                     <td class="py-2 px-3 text-sm opacity-70">${stock.sector || ''}</td>
-                    <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
+                    <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.percent_change)}">${stock.percent_change > 0 ? '+' : ''}${formatNumber(stock.percent_change)}%</td>
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
@@ -879,21 +920,11 @@
                 </tr>
             `).join('');
             
-            // Create mini charts only for new symbols
+            // Create mini charts for all symbols (simple approach)
             sortedData.forEach((stock, index) => {
-                if (!loadedCharts.has(stock.symbol)) {
-                    setTimeout(() => {
-                        createMiniChart(stock.symbol);
-                    }, index * 300); // 300ms delay between each chart to prevent rate limiting
-                } else {
-                    // Show existing chart if already loaded
-                    const loading = document.getElementById(`loading-${stock.symbol}`);
-                    const chart = document.getElementById(`chart-${stock.symbol}`);
-                    if (loading && chart) {
-                        loading.classList.add('hidden');
-                        chart.classList.remove('hidden');
-                    }
-                }
+                setTimeout(() => {
+                    createMiniChart(stock.symbol);
+                }, index * 300); // 300ms delay between each chart to prevent rate limiting
             });
         }
 
@@ -915,14 +946,14 @@
                 const isInPortfolio = portfolioSymbols.has(stock.symbol);
                 return `
                 <tr class="border-b last:border-b-0 hover:bg-slate-50">
-                    <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
-                    <td class="py-2 px-3 text-sm opacity-70">${stock.sector || ''}</td>
-                    <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.percent_change)}">${stock.percent_change > 0 ? '+' : ''}${formatNumber(stock.percent_change)}%</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
-                    <td class="py-2 px-3 text-center">
+                    <td class="content-col py-2 px-3 font-medium whitespace-nowrap">${stock.symbol || ''}</td>
+                    <td class="content-col py-2 px-3 text-sm opacity-70 whitespace-nowrap">${stock.sector || ''}</td>
+                    <td class="content-col py-2 px-3 text-right table-cell whitespace-nowrap ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
+                    <td class="content-col py-2 px-3 text-right table-cell whitespace-nowrap">${formatNumber(stock.close)}</td>
+                    <td class="content-col py-2 px-3 text-right table-cell whitespace-nowrap ${getValueClass(stock.percent_change)}">${stock.percent_change > 0 ? '+' : ''}${formatNumber(stock.percent_change)}%</td>
+                    <td class="content-col py-2 px-3 text-right table-cell whitespace-nowrap ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
+                    <td class="content-col py-2 px-3 text-right table-cell whitespace-nowrap ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
+                    <td class="content-col py-2 px-3 text-center whitespace-nowrap">
                         ${isInPortfolio 
                             ? `<button onclick="removeFromPortfolio('${stock.symbol}')" 
                                        class="px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200" 
@@ -1037,34 +1068,15 @@
         // Create mini chart for a symbol using SVG
         async function createMiniChart(symbol, retryCount = 0) {
             try {
-                // Check if chart is already loaded
-                if (loadedCharts.has(symbol)) {
-                    console.log(`📊 Chart for ${symbol} already loaded, skipping`);
-                    return;
-                }
-                
-                // Check if chart is already loading
-                if (chartLoadingPromises.has(symbol)) {
-                    console.log(`📊 Chart for ${symbol} already loading, waiting...`);
-                    await chartLoadingPromises.get(symbol);
-                    return;
-                }
-                
                 const canvas = document.getElementById(`chart-${symbol}`);
                 const loading = document.getElementById(`loading-${symbol}`);
                 if (!canvas || !loading) return;
-                
-                // Create loading promise
-                const loadingPromise = (async () => {
-                    try {
 
-                // Fetch chart data with retry logic and cache busting
+                // Fetch chart data with retry logic
                 let response;
                 try {
-                    const timestamp = Date.now();
-                    const requestId = Math.random().toString(36).substring(7);
-                    const url = `/api/series/symbol/${symbol}?_t=${timestamp}&_id=${requestId}`;
-                    console.log(`🔗 Fetching ${symbol} with requestId: ${requestId}`);
+                    const url = `/api/series/symbol/${symbol}`;
+                    console.log(`🔗 Fetching ${symbol}`);
                     response = await fetch(url);
                 } catch (fetchError) {
                     console.warn(`Network error fetching data for ${symbol}:`, fetchError);
@@ -1174,31 +1186,13 @@
                 // Hide loading
                 loading.classList.add('hidden');
 
-                // Mark chart as loaded
-                loadedCharts.add(symbol);
                 console.log(`SVG chart created successfully for ${symbol}`);
 
             } catch (error) {
                 console.error(`Error creating mini chart for ${symbol}:`, error);
                 const loading = document.getElementById(`loading-${symbol}`);
                 if (loading) loading.textContent = '!';
-            } finally {
-                // Clean up loading promise
-                chartLoadingPromises.delete(symbol);
             }
-                })();
-                
-                // Store the loading promise
-                chartLoadingPromises.set(symbol, loadingPromise);
-                await loadingPromise;
-                
-        } catch (error) {
-            console.error(`Error creating mini chart for ${symbol}:`, error);
-            const loading = document.getElementById(`loading-${symbol}`);
-            if (loading) loading.textContent = '!';
-            // Clean up loading promise on error
-            chartLoadingPromises.delete(symbol);
-        }
         }
 
         // Save-to-DB with SSE progress
@@ -1355,17 +1349,25 @@
             // Compute sticky offset for All Symbols header beneath the search bar
             function applyStickyOffset() {
                 const search = document.getElementById('all-symbols-search');
-                const table = document.querySelector('table.table-sticky');
-                if (!search || !table) return;
-                const extra = 16; // extra spacing below the search bar
-                const offset = (search.offsetHeight || 120) + extra;
-                table.style.setProperty('--sticky-offset', offset + 'px');
-                console.log(`Setting sticky offset: ${offset}px (search height: ${search.offsetHeight})`);
+                const container = document.querySelector('div.table-container.all-symbols');
+                if (!search || !container) return;
+                const extra = 8; // extra spacing below the search bar
+                const offset = (search.offsetHeight || 80) + extra;
+                container.style.setProperty('--sticky-offset', offset + 'px');
             }
             applyStickyOffset();
             window.addEventListener('resize', applyStickyOffset);
             // If fonts load later and change heights
             window.addEventListener('load', applyStickyOffset);
+            // Sync horizontal scroll: move sticky header row with table body
+            const tblContainer = document.querySelector('div.table-container.all-symbols');
+            const hdrRow = document.getElementById('all-symbols-header-row');
+            if (tblContainer && hdrRow) {
+                tblContainer.addEventListener('scroll', () => {
+                    hdrRow.style.transform = `translateX(${-tblContainer.scrollLeft}px)`;
+                });
+            }
+
             initDashboard();
 
             // Search functionality
@@ -1522,8 +1524,7 @@
                     document.getElementById('empty-state').style.display = 'none';
                     document.getElementById('portfolio-tbody').innerHTML = '';
                     
-                    // Clear all charts for full refresh
-                    clearAllCharts();
+                    // Removed chart clearing - simple approach
                     
                     await initDashboard();
                     ctrl.finish(true);
