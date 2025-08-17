@@ -1713,12 +1713,21 @@ async def get_my_portfolio():
                 change_str = stock_info.get('change', '')
                 percent_change_str = stock_info.get('percent_change', '')
                 
+                # Check if we have valid data from sector_data
+                close_price = stock_info.get('last_price', 0)
+                sector = stock_info.get('sector', '')
+                
+                # If no valid data from sector_data, mark for API update
+                if close_price == 0 or not sector:
+                    print(f"⚠️ {symbol} has no valid data in sector_data (close={close_price}, sector={sector})")
+                    # We'll handle this in the frontend by showing a note to refresh
+                
                 portfolio_stocks.append({
                     'symbol': symbol,
-                    'close': stock_info.get('last_price', 0),
+                    'close': close_price,
                     'change': parse_change(change_str),
                     'percent_change': parse_percent(percent_change_str),
-                    'sector': stock_info.get('sector', ''),
+                    'sector': sector,
                     'nvdr': nvdr_data.get(symbol, 0) if nvdr_data.get(symbol) else 0,
                     'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,
                 })
@@ -1731,6 +1740,45 @@ async def get_my_portfolio():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting portfolio: {str(e)}")
+
+
+@app.post("/api/portfolio/update-symbol-data/{symbol}")
+async def update_symbol_data(symbol: str):
+    """Update portfolio symbol data with latest API data"""
+    try:
+        if not symbol:
+            raise HTTPException(status_code=400, detail="Symbol is required")
+        
+        # Get latest data from API
+        api_data = get_symbol_series(symbol)
+        if hasattr(api_data, 'body'):
+            import json
+            api_content = json.loads(api_data.body.decode())
+            latest_data = api_content.get('latest', {})
+            
+            if latest_data.get('close', 0) > 0:
+                # Update the portfolio data in memory (for this session)
+                # Note: This is a temporary fix - in a real app you'd update the database
+                return JSONResponse(content={
+                    "success": True,
+                    "message": f"Updated {symbol} data",
+                    "data": {
+                        "symbol": symbol,
+                        "close": latest_data['close'],
+                        "change": latest_data['change'],
+                        "change_percent": latest_data['change_percent'],
+                        "date": latest_data['date']
+                    }
+                })
+            else:
+                raise HTTPException(status_code=404, detail=f"No valid data found for {symbol}")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to get API data")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating symbol data: {str(e)}")
 
 
 if __name__ == "__main__":

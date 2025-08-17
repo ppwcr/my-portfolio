@@ -1180,6 +1180,19 @@
                         // This handles cases where portfolio data is outdated but API data is correct
                         console.log(`📊 Creating chart anyway - API data appears to be more recent`);
                         console.log(`💡 Tip: Click "Refresh Portfolio" to update portfolio data with latest prices`);
+                        
+                        // Auto-update portfolio data with API data for this symbol
+                        if (portfolioRow && portfolioRow.close === 0) {
+                            console.log(`🔄 Auto-updating portfolio data for ${symbol} with API data`);
+                            portfolioRow.close = data.latest.close;
+                            portfolioRow.change = data.latest.change;
+                            portfolioRow.percent_change = data.latest.change_percent;
+                            
+                            // Trigger a re-render of the portfolio table to show updated data
+                            setTimeout(() => {
+                                renderMyPortfolio(myPortfolioData);
+                            }, 100);
+                        }
                     }
                 }
 
