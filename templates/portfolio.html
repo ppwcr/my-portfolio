@@ -753,6 +753,38 @@
             }
         }
         
+        async function refreshPortfolioWithLatestPrices() {
+            console.log('🔄 Refreshing portfolio with latest prices...');
+            
+            // Show loading state
+            const refreshBtn = document.getElementById('refresh-portfolio-btn');
+            if (refreshBtn) {
+                const originalText = refreshBtn.textContent;
+                refreshBtn.disabled = true;
+                refreshBtn.textContent = 'Refreshing...';
+                
+                try {
+                    // Fetch latest portfolio data
+                    const portfolioData = await fetchMyPortfolio();
+                    if (portfolioData) {
+                        myPortfolioData = portfolioData.portfolio_stocks || [];
+                        portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                        
+                        // Re-render portfolio with updated data
+                        renderMyPortfolio(myPortfolioData);
+                        
+                        console.log('✅ Portfolio refreshed with latest prices');
+                    }
+                } catch (error) {
+                    console.error('❌ Error refreshing portfolio:', error);
+                } finally {
+                    // Restore button
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = originalText;
+                }
+            }
+        }
+        
         // Remove chart for a specific symbol (simple cleanup)
         function removeChart(symbol) {
             // Remove chart elements from DOM
@@ -1133,20 +1165,22 @@
                 // Verify the data is for the correct symbol by checking the latest close price
                 // against the portfolio data
                 const portfolioRow = myPortfolioData.find(stock => stock.symbol === symbol);
-                if (portfolioRow && Math.abs(data.latest.close - portfolioRow.close) > 1) {
-                    console.error(`❌ DATA MISMATCH for ${symbol}: API close=${data.latest.close}, Portfolio close=${portfolioRow.close}`);
-                    console.error(`❌ This suggests the API returned wrong data for ${symbol}`);
+                if (portfolioRow && portfolioRow.close > 0) { // Only validate if portfolio has valid data
+                    const difference = Math.abs(data.latest.close - portfolioRow.close);
+                    const percentDifference = (difference / portfolioRow.close) * 100;
                     
-                    // Retry on frontend if we detect wrong data
-                    if (retryCount < 2) {
-                        console.log(`🔄 Retrying ${symbol} due to data mismatch...`);
-                        loading.textContent = retryCount === 0 ? '↻' : '↻↻';
-                        setTimeout(() => createMiniChart(symbol, retryCount + 1), 1500);
-                        return;
+                    // Allow larger differences for low-priced stocks and use percentage-based validation
+                    const maxAllowedDifference = Math.max(1, portfolioRow.close * 0.1); // 10% or 1, whichever is larger
+                    
+                    if (difference > maxAllowedDifference) {
+                        console.warn(`⚠️ DATA MISMATCH for ${symbol}: API close=${data.latest.close}, Portfolio close=${portfolioRow.close}, Difference=${difference.toFixed(2)} (${percentDifference.toFixed(1)}%)`);
+                        console.warn(`⚠️ This might indicate portfolio data is outdated for ${symbol}`);
+                        
+                        // For large mismatches, still create the chart but log the warning
+                        // This handles cases where portfolio data is outdated but API data is correct
+                        console.log(`📊 Creating chart anyway - API data appears to be more recent`);
+                        console.log(`💡 Tip: Click "Refresh Portfolio" to update portfolio data with latest prices`);
                     }
-                    
-                    loading.textContent = '!';
-                    return; // Don't create chart with wrong data after max retries
                 }
 
                 // Debug: Log the data for this symbol
