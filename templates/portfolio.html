@@ -6,6 +6,7 @@
     <title>Portfolio Dashboard - NVDR & Short Sales</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script>
         // Debug library loading
         window.addEventListener('load', () => {
@@ -1463,6 +1464,17 @@
                                 }]
                             };
                             
+                            // Add range selector buttons above the chart
+                            const rangeContainer = document.createElement('div');
+                            rangeContainer.className = 'flex gap-1 mb-2 justify-center';
+                            rangeContainer.innerHTML = `
+                                <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="90">3M</button>
+                                <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="365">1Y</button>
+                                <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="1825">5Y</button>
+                                <button class="range-btn px-3 py-1 text-sm bg-blue-500 text-white rounded" data-range="all">All</button>
+                            `;
+                            container.insertBefore(rangeContainer, canvas);
+
                             const chart = new window.Chart(canvas, {
                                 type: 'line',
                                 data: chartData,
@@ -1476,6 +1488,14 @@
                                     },
                                     scales: {
                                         x: {
+                                            type: 'time',
+                                            time: {
+                                                parser: 'yyyy-MM-dd',
+                                                displayFormats: {
+                                                    day: 'MMM dd',
+                                                    month: 'MMM yyyy'
+                                                }
+                                            },
                                             display: true,
                                             grid: {
                                                 color: '#eee'
@@ -1490,6 +1510,51 @@
                                     }
                                 }
                             });
+
+                            // Add range selector functionality
+                            const allData = [...data.series];
+                            let currentRange = 'all'; // Default to all data on first load
+
+                            function filterDataByRange(days) {
+                                if (days === 'all') {
+                                    return allData; // Show all historical data
+                                }
+                                
+                                // Get the latest date from the data
+                                const latestDate = new Date(Math.max(...allData.map(item => new Date(item.time))));
+                                const cutoffDate = new Date(latestDate);
+                                cutoffDate.setDate(cutoffDate.getDate() - days);
+                                
+                                return allData.filter(item => new Date(item.time) >= cutoffDate);
+                            }
+
+                            function updateChart(range) {
+                                const filteredData = filterDataByRange(range);
+                                chart.data.labels = filteredData.map(item => item.time);
+                                chart.data.datasets[0].data = filteredData.map(item => item.value);
+                                chart.update('none');
+                                
+                                // Update active button styling
+                                rangeContainer.querySelectorAll('.range-btn').forEach(btn => {
+                                    if (btn.dataset.range == range) {
+                                        btn.className = 'range-btn px-2 py-1 text-xs bg-blue-500 text-white rounded';
+                                    } else {
+                                        btn.className = 'range-btn px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded';
+                                    }
+                                });
+                            }
+
+                            // Add click handlers for range buttons
+                            rangeContainer.addEventListener('click', (e) => {
+                                if (e.target.classList.contains('range-btn')) {
+                                    const range = e.target.dataset.range;
+                                    currentRange = range;
+                                    updateChart(range);
+                                }
+                            });
+
+                            // Initialize with default range
+                            updateChart(currentRange);
                             
                             console.log('Chart.js chart created successfully!');
                             
@@ -1619,6 +1684,17 @@
                                     }]
                                 };
                                 
+                                // Add range selector buttons above the chart
+                                const rangeContainer = document.createElement('div');
+                                rangeContainer.className = 'flex gap-1 mb-2 justify-center';
+                                rangeContainer.innerHTML = `
+                                    <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="90">3M</button>
+                                    <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="365">1Y</button>
+                                    <button class="range-btn px-3 py-1 text-sm bg-slate-100 hover:bg-slate-200 rounded" data-range="1825">5Y</button>
+                                    <button class="range-btn px-3 py-1 text-sm bg-blue-500 text-white rounded" data-range="all">All</button>
+                                `;
+                                container.insertBefore(rangeContainer, canvas);
+                                
                                 const chart = new window.Chart(canvas, {
                                     type: 'line',
                                     data: chartData,
@@ -1632,6 +1708,14 @@
                                         },
                                         scales: {
                                             x: {
+                                                type: 'time',
+                                                time: {
+                                                    parser: 'yyyy-MM-dd',
+                                                    displayFormats: {
+                                                        day: 'MMM dd',
+                                                        month: 'MMM yyyy'
+                                                    }
+                                                },
                                                 display: true,
                                                 grid: {
                                                     color: '#eee'
@@ -1646,6 +1730,53 @@
                                         }
                                     }
                                 });
+
+                                // Add range selector functionality
+                                const allData = [...data.series];
+                                let currentRange = 'all'; // Default to all data on first load
+
+                                function filterDataByRange(days) {
+                                    // Get the latest date from the data
+                                    const latestDate = new Date(Math.max(...allData.map(item => new Date(item.time))));
+                                    const cutoffDate = new Date(latestDate);
+                                    
+                                    if (days === 'all') {
+                                        // Limit "All" to 5 years max for better visualization
+                                        cutoffDate.setFullYear(cutoffDate.getFullYear() - 5);
+                                    } else {
+                                        cutoffDate.setDate(cutoffDate.getDate() - days);
+                                    }
+                                    
+                                    return allData.filter(item => new Date(item.time) >= cutoffDate);
+                                }
+
+                                function updateChart(range) {
+                                    const filteredData = filterDataByRange(range);
+                                    chart.data.labels = filteredData.map(item => item.time);
+                                    chart.data.datasets[0].data = filteredData.map(item => item.value);
+                                    chart.update('none');
+                                    
+                                    // Update active button styling
+                                    rangeContainer.querySelectorAll('.range-btn').forEach(btn => {
+                                        if (btn.dataset.range == range) {
+                                            btn.className = 'range-btn px-2 py-1 text-xs bg-blue-500 text-white rounded';
+                                        } else {
+                                            btn.className = 'range-btn px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded';
+                                        }
+                                    });
+                                }
+
+                                // Add click handlers for range buttons
+                                rangeContainer.addEventListener('click', (e) => {
+                                    if (e.target.classList.contains('range-btn')) {
+                                        const range = e.target.dataset.range;
+                                        currentRange = range;
+                                        updateChart(range);
+                                    }
+                                });
+
+                                // Initialize with default range
+                                updateChart(currentRange);
                                 
                                 console.log('Chart.js refresh chart created successfully!');
                                 
