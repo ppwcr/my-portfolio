@@ -38,10 +38,24 @@
         /* Make All Symbols table header sticky under the search bar */
         .table-sticky thead th {
             position: sticky;
-            top: var(--sticky-offset, 80px); /* computed from search bar height */
-            background: rgba(255, 255, 255, 0.97);
-            backdrop-filter: blur(2px);
-            z-index: 12;
+            top: var(--sticky-offset, 120px); /* computed from search bar height */
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(8px);
+            z-index: 15;
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+        
+        /* Ensure the table container doesn't interfere with sticky positioning */
+        .table-sticky {
+            position: relative;
+        }
+        
+        /* Make the table container handle overflow properly for sticky headers */
+        .table-container {
+            overflow-x: auto;
+            overflow-y: visible;
+            position: relative;
         }
 
         /* Mini chart styling */
@@ -252,6 +266,10 @@
 
         <!-- Search Bar (for All Symbols) -->
         <section id="all-symbols-search" class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-2xl border border-blue-200 shadow p-3 mt-2">
+            <div class="flex items-center justify-between gap-3 mb-2">
+                <h2 class="text-sm font-semibold">All Symbols</h2>
+                <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
+            </div>
             <div class="flex items-center gap-3">
                 <div class="relative w-full md:max-w-2xl">
                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600">🔎</span>
@@ -268,11 +286,7 @@
         </section>
 
         <!-- Main Portfolio Table -->
-        <div class="overflow-x-auto rounded-2xl shadow bg-white/80">
-            <div class="p-3 border-b flex items-center justify-between bg-white/80 rounded-t-2xl">
-                <h2 class="text-sm font-semibold">All Symbols</h2>
-                <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
-            </div>
+        <div class="table-container overflow-x-auto rounded-2xl shadow bg-white/80">
             <table class="w-full text-sm table-sticky">
                 <thead>
                     <tr class="border-b bg-white/70">
@@ -346,6 +360,10 @@
         let sortKey = 'symbol';
         let sortDir = 'asc';
         let searchQuery = '';
+        
+        // Chart management
+        let loadedCharts = new Set(); // Track which charts are already loaded
+        let chartLoadingPromises = new Map(); // Track loading promises to avoid duplicates
 
         // Utility functions
         function fmt(n, frac = 2) {
@@ -657,6 +675,10 @@
                 const result = await response.json();
                 if (result.success) {
                     portfolioSymbols.delete(symbol);
+                    
+                    // Remove chart completely
+                    removeChart(symbol);
+                    
                     await refreshMyPortfolio();
                     renderPortfolioTable(portfolioData); // Re-render to update buttons
                 }
@@ -674,6 +696,32 @@
                 portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
                 renderMyPortfolio(myPortfolioData);
             }
+        }
+        
+        // Clear all charts (for full refresh)
+        function clearAllCharts() {
+            loadedCharts.clear();
+            chartLoadingPromises.clear();
+            console.log('🗑️ All charts cleared');
+        }
+        
+        // Remove chart for a specific symbol
+        function removeChart(symbol) {
+            loadedCharts.delete(symbol);
+            chartLoadingPromises.delete(symbol);
+            
+            // Remove chart elements from DOM
+            const chartElement = document.getElementById(`chart-${symbol}`);
+            const loadingElement = document.getElementById(`loading-${symbol}`);
+            
+            if (chartElement) {
+                chartElement.remove();
+            }
+            if (loadingElement) {
+                loadingElement.remove();
+            }
+            
+            console.log(`🗑️ Chart removed for ${symbol}`);
         }
 
         // Render functions
@@ -828,11 +876,21 @@
                 </tr>
             `).join('');
             
-            // Create mini charts for each symbol with longer delays
+            // Create mini charts only for new symbols
             sortedData.forEach((stock, index) => {
-                setTimeout(() => {
-                    createMiniChart(stock.symbol);
-                }, index * 300); // 300ms delay between each chart to prevent rate limiting
+                if (!loadedCharts.has(stock.symbol)) {
+                    setTimeout(() => {
+                        createMiniChart(stock.symbol);
+                    }, index * 300); // 300ms delay between each chart to prevent rate limiting
+                } else {
+                    // Show existing chart if already loaded
+                    const loading = document.getElementById(`loading-${stock.symbol}`);
+                    const chart = document.getElementById(`chart-${stock.symbol}`);
+                    if (loading && chart) {
+                        loading.classList.add('hidden');
+                        chart.classList.remove('hidden');
+                    }
+                }
             });
         }
 
@@ -976,9 +1034,26 @@
         // Create mini chart for a symbol using SVG
         async function createMiniChart(symbol, retryCount = 0) {
             try {
+                // Check if chart is already loaded
+                if (loadedCharts.has(symbol)) {
+                    console.log(`📊 Chart for ${symbol} already loaded, skipping`);
+                    return;
+                }
+                
+                // Check if chart is already loading
+                if (chartLoadingPromises.has(symbol)) {
+                    console.log(`📊 Chart for ${symbol} already loading, waiting...`);
+                    await chartLoadingPromises.get(symbol);
+                    return;
+                }
+                
                 const canvas = document.getElementById(`chart-${symbol}`);
                 const loading = document.getElementById(`loading-${symbol}`);
                 if (!canvas || !loading) return;
+                
+                // Create loading promise
+                const loadingPromise = (async () => {
+                    try {
 
                 // Fetch chart data with retry logic and cache busting
                 let response;
@@ -1096,13 +1171,31 @@
                 // Hide loading
                 loading.classList.add('hidden');
 
+                // Mark chart as loaded
+                loadedCharts.add(symbol);
                 console.log(`SVG chart created successfully for ${symbol}`);
 
             } catch (error) {
                 console.error(`Error creating mini chart for ${symbol}:`, error);
                 const loading = document.getElementById(`loading-${symbol}`);
                 if (loading) loading.textContent = '!';
+            } finally {
+                // Clean up loading promise
+                chartLoadingPromises.delete(symbol);
             }
+                })();
+                
+                // Store the loading promise
+                chartLoadingPromises.set(symbol, loadingPromise);
+                await loadingPromise;
+                
+        } catch (error) {
+            console.error(`Error creating mini chart for ${symbol}:`, error);
+            const loading = document.getElementById(`loading-${symbol}`);
+            if (loading) loading.textContent = '!';
+            // Clean up loading promise on error
+            chartLoadingPromises.delete(symbol);
+        }
         }
 
         // Save-to-DB with SSE progress
@@ -1261,9 +1354,10 @@
                 const search = document.getElementById('all-symbols-search');
                 const table = document.querySelector('table.table-sticky');
                 if (!search || !table) return;
-                const extra = 12; // extra spacing below the search bar
-                const offset = (search.offsetHeight || 64) + extra;
+                const extra = 16; // extra spacing below the search bar
+                const offset = (search.offsetHeight || 120) + extra;
                 table.style.setProperty('--sticky-offset', offset + 'px');
+                console.log(`Setting sticky offset: ${offset}px (search height: ${search.offsetHeight})`);
             }
             applyStickyOffset();
             window.addEventListener('resize', applyStickyOffset);
@@ -1424,6 +1518,10 @@
                     document.getElementById('loading-state').style.display = 'block';
                     document.getElementById('empty-state').style.display = 'none';
                     document.getElementById('portfolio-tbody').innerHTML = '';
+                    
+                    // Clear all charts for full refresh
+                    clearAllCharts();
+                    
                     await initDashboard();
                     ctrl.finish(true);
                 } catch (err) {
