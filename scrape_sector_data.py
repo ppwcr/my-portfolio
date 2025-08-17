@@ -200,13 +200,17 @@ class SETSectorScraper:
         for row in rows[1:]:
             if len(row) == len(headers):
                 row_dict = dict(zip(headers, row))
-                # Skip empty rows or rows without symbols
-                if any(cell.strip() for cell in row) and self._has_symbol(row_dict):
+                # Skip empty rows, header rows, or rows without valid symbols
+                if (any(cell.strip() for cell in row) and 
+                    self._has_symbol(row_dict) and 
+                    not self._is_header_row(row_dict)):
                     # Clean up markdown links in symbol column
                     for key, value in row_dict.items():
                         if 'symbol' in key.lower() and value.startswith('[') and ']' in value:
-                            symbol = value[1:value.find(']')]
-                            row_dict[key] = symbol
+                            full_symbol = value[1:value.find(']')]
+                            # Extract base symbol (handle CB, SP, W1, W2, etc. suffixes)
+                            base_symbol = self._extract_base_symbol(full_symbol)
+                            row_dict[key] = base_symbol
                     result.append(row_dict)
                 
         return result if result else None
@@ -216,6 +220,22 @@ class SETSectorScraper:
         for key, value in row_dict.items():
             if 'symbol' in key.lower() and self._is_symbol(value):
                 return True
+        return False
+    
+    def _is_header_row(self, row_dict: Dict[str, str]) -> bool:
+        """Check if a table row is a header/separator row that should be skipped."""
+        for key, value in row_dict.items():
+            if 'symbol' in key.lower():
+                # Skip rows with sector names like "SERVICE - Services", "COMM - Commerce"
+                if (' - ' in value or 
+                    'SERVICE' in value.upper() or 
+                    'COMM' in value.upper() or
+                    'HELTH' in value.upper() or
+                    'MEDIA' in value.upper() or
+                    'PROF' in value.upper() or
+                    'TOURISM' in value.upper() or
+                    'TRANS' in value.upper()):
+                    return True
         return False
     
     def parse_text_table(self, content: str) -> Optional[List[Dict[str, str]]]:
@@ -332,13 +352,34 @@ class SETSectorScraper:
         result.append(line[last_pos:].strip())
         return result
     
+    def _extract_base_symbol(self, symbol_text: str) -> str:
+        """Extract base symbol from text that may contain suffixes like CB, SP, W1, etc."""
+        symbol_text = symbol_text.strip()
+        
+        # Common suffixes to remove
+        suffixes = [' CB', ' SP', ' NVDR', '-W1', '-W2', '-W3', '-W4', '-W5', '-W6']
+        
+        for suffix in suffixes:
+            if symbol_text.endswith(suffix):
+                symbol_text = symbol_text[:-len(suffix)]
+                break
+        
+        # Also handle cases like "GRAND CB" -> "GRAND"
+        if ' ' in symbol_text:
+            symbol_text = symbol_text.split()[0]
+        
+        return symbol_text.strip()
+    
     def _is_symbol(self, text: str) -> bool:
         """Check if text looks like a stock symbol."""
-        # Handle markdown links like [GFPT](...)
+        # Handle markdown links like [GFPT CB](...)
         if text.startswith('[') and ']' in text:
-            symbol = text[1:text.find(']')]
-            return bool(re.match(r'^[A-Z]{2,5}$', symbol.strip()))
-        return bool(re.match(r'^[A-Z]{2,5}$', text.strip()))
+            full_symbol = text[1:text.find(']')]
+            base_symbol = self._extract_base_symbol(full_symbol)
+            return bool(re.match(r'^[A-Z]{2,10}$', base_symbol))  # Increased to 10 for longer symbols
+        
+        base_symbol = self._extract_base_symbol(text)
+        return bool(re.match(r'^[A-Z]{2,10}$', base_symbol))
     
     async def scrape_sector(self, sector: str) -> Dict[str, Any]:
         """Scrape a single sector page."""

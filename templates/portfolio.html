@@ -97,6 +97,46 @@
             </div>
         </section>
 
+        <!-- My Portfolio Table -->
+        <section class="bg-white/80 rounded-2xl shadow">
+            <div class="p-4 border-b">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-lg font-semibold">My Portfolio</h2>
+                    <div class="flex gap-2 items-center">
+                        <span id="portfolio-count" class="text-sm opacity-70">0 symbols</span>
+                        <button id="refresh-portfolio-btn" class="px-3 py-1 rounded-lg shadow bg-blue-100 text-blue-700 text-sm">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b bg-white/70">
+                            <th class="py-2 px-3 text-left">Symbol</th>
+                            <th class="py-2 px-3 text-left">Sector</th>
+                            <th class="py-2 px-3 text-right">ราคาปิด</th>
+                            <th class="py-2 px-3 text-right">Change</th>
+                            <th class="py-2 px-3 text-right">% Change</th>
+                            <th class="py-2 px-3 text-right">NVDR (Baht)</th>
+                            <th class="py-2 px-3 text-right">Short Sales (Baht)</th>
+                            <th class="py-2 px-3 text-center">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="my-portfolio-tbody">
+                        <!-- My portfolio data will be populated here -->
+                    </tbody>
+                </table>
+                
+                <!-- Empty state for My Portfolio -->
+                <div id="my-portfolio-empty" class="py-12 text-center text-slate-500">
+                    <div class="mb-2">📋</div>
+                    <div>Your portfolio is empty</div>
+                    <div class="text-xs mt-1">Click "+" next to any symbol below to add it to your portfolio</div>
+                </div>
+            </div>
+        </section>
 
         <!-- Main Portfolio Table -->
         <div class="overflow-x-auto rounded-2xl shadow bg-white/80">
@@ -116,18 +156,31 @@
                                 <span class="text-xs opacity-30" id="sort-close">↕</span>
                             </span>
                         </th>
+                        <th class="py-2 px-3 text-right sortable" data-key="change">
+                            <span class="inline-flex items-center gap-1">
+                                Change
+                                <span class="text-xs opacity-30" id="sort-change">↕</span>
+                            </span>
+                        </th>
+                        <th class="py-2 px-3 text-right sortable" data-key="percent_change">
+                            <span class="inline-flex items-center gap-1">
+                                % Change
+                                <span class="text-xs opacity-30" id="sort-percent_change">↕</span>
+                            </span>
+                        </th>
                         <th class="py-2 px-3 text-right sortable" data-key="nvdr">
                             <span class="inline-flex items-center gap-1">
-                                NVDR (M.Baht)
+                                NVDR (Baht)
                                 <span class="text-xs opacity-30" id="sort-nvdr">↕</span>
                             </span>
                         </th>
-                        <th class="py-2 px-3 text-right sortable" data-key="shortMB">
+                        <th class="py-2 px-3 text-right sortable" data-key="shortBaht">
                             <span class="inline-flex items-center gap-1">
-                                Short Sales (M.Baht)
-                                <span class="text-xs opacity-30" id="sort-shortMB">↕</span>
+                                Short Sales (Baht)
+                                <span class="text-xs opacity-30" id="sort-shortBaht">↕</span>
                             </span>
                         </th>
+                        <th class="py-2 px-3 text-center">Portfolio</th>
                     </tr>
                 </thead>
                 <tbody id="portfolio-tbody">
@@ -155,6 +208,8 @@
         // Global state
         let portfolioData = [];
         let originalData = [];
+        let myPortfolioData = [];
+        let portfolioSymbols = new Set();
         let sortKey = 'symbol';
         let sortDir = 'asc';
         let searchQuery = '';
@@ -208,6 +263,64 @@
             } catch (error) {
                 console.error('Error fetching summary data:', error);
                 return null;
+            }
+        }
+
+        async function fetchMyPortfolio() {
+            try {
+                const response = await fetch('/api/portfolio/my-symbols');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching my portfolio:', error);
+                return null;
+            }
+        }
+
+        async function addToPortfolio(symbol) {
+            try {
+                const response = await fetch('/api/portfolio/add-symbol', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ symbol })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    portfolioSymbols.add(symbol);
+                    await refreshMyPortfolio();
+                    renderPortfolioTable(portfolioData); // Re-render to update buttons
+                }
+                return result;
+            } catch (error) {
+                console.error('Error adding to portfolio:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function removeFromPortfolio(symbol) {
+            try {
+                const response = await fetch(`/api/portfolio/remove-symbol/${symbol}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    portfolioSymbols.delete(symbol);
+                    await refreshMyPortfolio();
+                    renderPortfolioTable(portfolioData); // Re-render to update buttons
+                }
+                return result;
+            } catch (error) {
+                console.error('Error removing from portfolio:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        async function refreshMyPortfolio() {
+            const portfolioData = await fetchMyPortfolio();
+            if (portfolioData) {
+                myPortfolioData = portfolioData.portfolio_stocks || [];
+                portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                renderMyPortfolio(myPortfolioData);
             }
         }
 
@@ -287,6 +400,42 @@
             `).join('');
         }
 
+        function renderMyPortfolio(data) {
+            const tbody = document.getElementById('my-portfolio-tbody');
+            const emptyState = document.getElementById('my-portfolio-empty');
+            const countEl = document.getElementById('portfolio-count');
+
+            countEl.textContent = `${data.length} symbols`;
+
+            if (!data || data.length === 0) {
+                emptyState.style.display = 'block';
+                tbody.innerHTML = '';
+                return;
+            }
+
+            // Sort data alphabetically by symbol A-Z (as backup to database sort)
+            const sortedData = [...data].sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+            emptyState.style.display = 'none';
+            tbody.innerHTML = sortedData.map(stock => `
+                <tr class="border-b last:border-b-0 hover:bg-slate-50">
+                    <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
+                    <td class="py-2 px-3 text-sm opacity-70">${stock.sector || ''}</td>
+                    <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.percent_change)}">${stock.percent_change > 0 ? '+' : ''}${formatNumber(stock.percent_change)}%</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
+                    <td class="py-2 px-3 text-center">
+                        <button onclick="removeFromPortfolio('${stock.symbol}')" 
+                                class="px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200" 
+                                title="Remove from portfolio">
+                            ✕
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
 
         function renderPortfolioTable(data) {
             const tbody = document.getElementById('portfolio-tbody');
@@ -302,15 +451,30 @@
             }
 
             emptyState.style.display = 'none';
-            tbody.innerHTML = data.map(stock => `
+            tbody.innerHTML = data.map(stock => {
+                const isInPortfolio = portfolioSymbols.has(stock.symbol);
+                return `
                 <tr class="border-b last:border-b-0 hover:bg-slate-50">
                     <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
                     <td class="py-2 px-3 text-sm opacity-70">${stock.sector || ''}</td>
                     <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr)}</td>
-                    <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortMB)}">${formatNumber(stock.shortMB)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.percent_change)}">${stock.percent_change > 0 ? '+' : ''}${formatNumber(stock.percent_change)}%</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
+                    <td class="py-2 px-3 text-center">
+                        ${isInPortfolio 
+                            ? `<button onclick="removeFromPortfolio('${stock.symbol}')" 
+                                       class="px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200" 
+                                       title="Remove from portfolio">✓</button>`
+                            : `<button onclick="addToPortfolio('${stock.symbol}')" 
+                                       class="px-2 py-1 rounded text-xs bg-green-100 text-green-700 hover:bg-green-200" 
+                                       title="Add to portfolio">+</button>`
+                        }
+                    </td>
                 </tr>
-            `).join('');
+                `;
+            }).join('');
         }
 
         // Sorting and filtering
@@ -362,7 +526,7 @@
 
         // Export functionality
         function exportCSV() {
-            const headers = ['Symbol', 'Sector', 'ราคาปิด (Baht)', 'NVDR (M.Baht)', 'Short Sales (M.Baht)'];
+            const headers = ['Symbol', 'Sector', 'ราคาปิด (Baht)', 'Change', '% Change', 'NVDR (Baht)', 'Short Sales (Baht)'];
             const lines = [headers.map(csvEscape).join(',')];
             
             portfolioData.forEach(stock => {
@@ -370,8 +534,10 @@
                     csvEscape(stock.symbol || ''),
                     csvEscape(stock.sector || ''),
                     String(stock.close || 0),
+                    String(stock.change || 0),
+                    String(stock.percent_change || 0),
                     String(stock.nvdr || 0),
-                    String(stock.shortMB || 0)
+                    String(stock.shortBaht || 0)
                 ].join(','));
             });
 
@@ -387,14 +553,20 @@
         // Initialize the dashboard
         async function initDashboard() {
             try {
-                const [dashboardData, summaryData] = await Promise.all([
+                const [dashboardData, summaryData, portfolioData] = await Promise.all([
                     fetchDashboardData(),
-                    fetchSummaryData()
+                    fetchSummaryData(),
+                    fetchMyPortfolio()
                 ]);
 
                 if (dashboardData) {
                     originalData = dashboardData.portfolio_stocks || [];
-                    portfolioData = [...originalData];
+                    
+                    // Initialize portfolio symbols
+                    if (portfolioData) {
+                        portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                        myPortfolioData = portfolioData.portfolio_stocks || [];
+                    }
                     
                     // Update trade date
                     const tradeDateEl = document.getElementById('trade-date');
@@ -407,7 +579,10 @@
                     // Render all sections
                     renderSummaryCards(summaryData);
                     renderInvestorSummary(dashboardData.investor_summary);
-                    renderPortfolioTable(portfolioData);
+                    renderMyPortfolio(myPortfolioData);
+                    
+                    // Sort and render portfolio table (default: symbol A-Z)
+                    filterAndSort();
                     updateSortIndicators();
                 } else {
                     document.getElementById('empty-state').style.display = 'block';
@@ -446,6 +621,11 @@
                 document.getElementById('empty-state').style.display = 'none';
                 document.getElementById('portfolio-tbody').innerHTML = '';
                 initDashboard();
+            });
+
+            // Refresh portfolio functionality
+            document.getElementById('refresh-portfolio-btn').addEventListener('click', () => {
+                refreshMyPortfolio();
             });
         });
     </script>

@@ -571,26 +571,27 @@ async def save_to_database():
         update_progress("running", "sector_scraping", 45, "🚀 Starting sector scraping command...", 
                       {"command": "scrape_sector_data.py"})
         
-        exit_code, stdout, stderr = await run_cmd(cmd, timeout=45)  # 45 seconds - much faster now
+        exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)  # Increased to 60 seconds for reliability
         print(f"DEBUG: Sector scraping completed. Exit code: {exit_code}")
         print(f"DEBUG: stdout: {stdout[:200]}...")
         print(f"DEBUG: stderr: {stderr[:200]}...")
         
-        if exit_code == 0:
-            update_progress("running", "sector_processing", 60, "Processing sector data files...")
-            
-            # Process each sector CSV file
-            sector_files = list(outdir.glob("*.constituents.csv"))
-            total_sectors = len(sector_files)
-        else:
-            # If sector scraping failed/timed out, try to use the most recent complete sector data
-            update_progress("running", "sector_fallback", 60, "Sector scraping timed out - using latest available data...")
+        # Always check if we got a complete set (8 sectors), regardless of exit code
+        sector_files = list(outdir.glob("*.constituents.csv"))
+        total_sectors = len(sector_files)
+        
+        # If we don't have all 8 sectors, use the most recent complete set
+        if total_sectors < 8:
+            update_progress("running", "sector_fallback", 60, f"Incomplete sector data ({total_sectors}/8) - using latest complete data...")
+            print(f"DEBUG: Current scraping only got {total_sectors}/8 sectors, looking for complete fallback data")
             
             # Find the most recent complete sector directory
             all_sector_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("sectors_")]
             complete_dirs = []
             
             for sector_dir in all_sector_dirs:
+                if sector_dir.name == outdir.name:  # Skip the current incomplete directory
+                    continue
                 sector_files_in_dir = list(sector_dir.glob("*.constituents.csv"))
                 if len(sector_files_in_dir) >= 8:  # Complete set has all 8 sectors
                     complete_dirs.append((sector_dir, sector_files_in_dir))
@@ -600,12 +601,15 @@ async def save_to_database():
                 complete_dirs.sort(key=lambda x: x[0].name)
                 outdir, sector_files = complete_dirs[-1]
                 total_sectors = len(sector_files)
-                update_progress("running", "sector_processing", 60, f"Using complete sector data from {outdir.name}...")
+                update_progress("running", "sector_processing", 60, f"✅ Using complete sector data from {outdir.name} ({total_sectors} sectors)...")
                 print(f"DEBUG: Using fallback sector data from {outdir} with {total_sectors} sectors")
             else:
                 update_progress("running", "sector_failed", 60, "⚠️ No complete sector data available")
                 sector_files = []
                 total_sectors = 0
+        else:
+            update_progress("running", "sector_processing", 60, f"✅ Processing complete sector data ({total_sectors} sectors)...")
+            print(f"DEBUG: Using current sector data with all {total_sectors} sectors")
         
         # Process sector files (whether from new scraping or fallback)
         if sector_files:
@@ -618,7 +622,38 @@ async def save_to_database():
                 
                 try:
                     sector_df = pd.read_csv(sector_file)
-                    success = db.save_sector_data(sector_df, sector_name, trade_date)
+                    print(f"🔍 DEBUG: {sector_name} sector loaded {len(sector_df)} rows from {sector_file}")
+                    
+                    # Check if GRAND is in this sector's data
+                    if sector_name == 'service':
+                        grand_rows = sector_df[sector_df['Symbol'] == 'GRAND']
+                        if not grand_rows.empty:
+                            print(f"✅ DEBUG: GRAND found in {sector_name} CSV with price: {grand_rows.iloc[0]['Last']}")
+                        else:
+                            print(f"❌ DEBUG: GRAND NOT found in {sector_name} CSV")
+                    
+                    # Retry logic for sector save operations
+                    max_retries = 3
+                    success = False
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            success = db.save_sector_data(sector_df, sector_name, trade_date)
+                            if success:
+                                print(f"✅ DEBUG: {sector_name} sector save SUCCESS on attempt {attempt + 1}")
+                                break
+                            else:
+                                print(f"❌ DEBUG: {sector_name} sector save FAILED on attempt {attempt + 1}")
+                                if attempt < max_retries - 1:
+                                    # Brief pause before retry
+                                    import asyncio
+                                    await asyncio.sleep(1)
+                        except Exception as retry_e:
+                            print(f"💥 DEBUG: {sector_name} sector save ERROR on attempt {attempt + 1}: {retry_e}")
+                            if attempt < max_retries - 1:
+                                import asyncio
+                                await asyncio.sleep(1)
+                    
                     results["sector_data"][sector_name] = success
                     
                     if success:
@@ -627,7 +662,8 @@ async def save_to_database():
                                       {"current_sector": sector_name, "records_count": len(sector_df)})
                     else:
                         update_progress("running", "sector_processing", int(progress_pct), 
-                                      f"⚠️ Failed to save {sector_name}", {"current_sector": sector_name})
+                                      f"⚠️ Failed to save {sector_name} after {max_retries} attempts", {"current_sector": sector_name})
+                        print(f"❌ Failed to save {sector_name} after {max_retries} attempts")
                         
                 except Exception as e:
                     print(f"Error processing sector {sector_name}: {e}")
@@ -783,8 +819,13 @@ async def get_portfolio_dashboard():
         portfolio_stocks = []
         if latest_trade_date:
             # Get all stocks with prices from sector_data
-            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector').eq('trade_date', latest_trade_date).execute()
+            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_trade_date).execute()
             stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+            print(f"📊 DEBUG: Found {len(stocks_data)} stocks in sector_data for date {latest_trade_date}")
+            if 'GRAND' in stocks_data:
+                print(f"✅ DEBUG: GRAND found in sector_data: {stocks_data['GRAND']}")
+            else:
+                print(f"❌ DEBUG: GRAND NOT found in sector_data")
             
             # Get NVDR data
             nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', latest_trade_date).execute()
@@ -797,14 +838,53 @@ async def get_portfolio_dashboard():
             # Combine all data
             all_symbols = set(stocks_data.keys()) | set(nvdr_data.keys()) | set(short_data.keys())
             
-            for symbol in all_symbols:
+            for symbol in sorted(all_symbols):  # Sort symbols alphabetically A-Z
                 stock_info = stocks_data.get(symbol, {})
+                
+                # Debug: Check symbols with NVDR data but no sector data
+                if symbol in nvdr_data and not stock_info:
+                    print(f"⚠️  DEBUG: {symbol} has NVDR data ({nvdr_data[symbol]}) but no sector data (price shows 0)")
+                
+                # Parse change and percent_change strings to numbers
+                change_str = stock_info.get('change', '')
+                percent_change_str = stock_info.get('percent_change', '')
+                
+                # Helper function to parse change values
+                def parse_change(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        # Remove + sign and convert to float
+                        cleaned = str(value).replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                def parse_percent(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        # Remove % sign and + sign, then convert to float
+                        cleaned = str(value).replace('%', '').replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                # Debug: Check for symbols with NVDR but no sector data
+                has_nvdr = nvdr_data.get(symbol, 0) != 0
+                has_sector = bool(stock_info.get('last_price', 0))
+                
+                if has_nvdr and not has_sector:
+                    print(f"⚠️  DEBUG: {symbol} has NVDR data ({nvdr_data.get(symbol, 0)}) but no sector data (price shows 0)")
+                
                 portfolio_stocks.append({
                     'symbol': symbol,
                     'close': stock_info.get('last_price', 0),
+                    'change': parse_change(change_str),
+                    'percent_change': parse_percent(percent_change_str),
                     'sector': stock_info.get('sector', ''),
-                    'nvdr': round(nvdr_data.get(symbol, 0) / 1000000, 2) if nvdr_data.get(symbol) else 0,  # Convert to millions
-                    'shortMB': round(short_data.get(symbol, 0) / 1000000, 2) if short_data.get(symbol) else 0,  # Convert to millions
+                    'nvdr': nvdr_data.get(symbol, 0) if nvdr_data.get(symbol) else 0,  # Keep in Baht
+                    'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,  # Keep in Baht
                 })
         
         return JSONResponse(content={
@@ -870,6 +950,130 @@ async def get_portfolio_summary():
                 "message": str(e)
             }
         )
+
+
+@app.post("/api/portfolio/add-symbol")
+async def add_portfolio_symbol(request: Request):
+    """Add a symbol to the user's portfolio"""
+    try:
+        data = await request.json()
+        symbol = data.get('symbol', '').strip().upper()
+        
+        if not symbol:
+            raise HTTPException(status_code=400, detail="Symbol is required")
+        
+        db = get_proper_db()
+        success = db.add_portfolio_symbol(symbol)
+        
+        if success:
+            return JSONResponse(content={"success": True, "message": f"Added {symbol} to portfolio"})
+        else:
+            raise HTTPException(status_code=500, detail="Failed to add symbol to portfolio")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error adding symbol: {str(e)}")
+
+
+@app.delete("/api/portfolio/remove-symbol/{symbol}")
+async def remove_portfolio_symbol(symbol: str):
+    """Remove a symbol from the user's portfolio"""
+    try:
+        if not symbol:
+            raise HTTPException(status_code=400, detail="Symbol is required")
+        
+        db = get_proper_db()
+        success = db.remove_portfolio_symbol(symbol)
+        
+        if success:
+            return JSONResponse(content={"success": True, "message": f"Removed {symbol} from portfolio"})
+        else:
+            raise HTTPException(status_code=500, detail="Failed to remove symbol from portfolio")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error removing symbol: {str(e)}")
+
+
+@app.get("/api/portfolio/my-symbols")
+async def get_my_portfolio():
+    """Get the user's portfolio with current stock data"""
+    try:
+        db = get_proper_db()
+        
+        # Get portfolio symbols
+        portfolio_symbols = db.get_portfolio_symbols()
+        
+        if not portfolio_symbols:
+            return JSONResponse(content={
+                'portfolio_symbols': [],
+                'portfolio_stocks': []
+            })
+        
+        # Get latest trade date
+        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+        latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        
+        portfolio_stocks = []
+        if latest_trade_date:
+            # Get stock data for portfolio symbols
+            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_trade_date).execute()
+            stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+            
+            # Get NVDR data for portfolio symbols
+            nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', latest_trade_date).execute()
+            nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+            
+            # Get Short Sales data for portfolio symbols
+            short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', latest_trade_date).execute()
+            short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+            
+            # Build portfolio stock data (symbols already sorted A-Z from database)
+            for symbol in portfolio_symbols:
+                stock_info = stocks_data.get(symbol, {})
+                
+                # Parse change data
+                def parse_change(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        cleaned = str(value).replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                def parse_percent(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        cleaned = str(value).replace('%', '').replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                change_str = stock_info.get('change', '')
+                percent_change_str = stock_info.get('percent_change', '')
+                
+                portfolio_stocks.append({
+                    'symbol': symbol,
+                    'close': stock_info.get('last_price', 0),
+                    'change': parse_change(change_str),
+                    'percent_change': parse_percent(percent_change_str),
+                    'sector': stock_info.get('sector', ''),
+                    'nvdr': nvdr_data.get(symbol, 0) if nvdr_data.get(symbol) else 0,
+                    'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,
+                })
+        
+        return JSONResponse(content={
+            'portfolio_symbols': portfolio_symbols,
+            'portfolio_stocks': portfolio_stocks,
+            'trade_date': latest_trade_date
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting portfolio: {str(e)}")
 
 
 if __name__ == "__main__":

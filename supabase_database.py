@@ -31,7 +31,16 @@ class ProperDatabaseManager:
             cleaned = str(value).replace(',', '').strip()
             if cleaned == '' or cleaned == '-':
                 return None
-            return float(cleaned)
+            
+            result = float(cleaned)
+            
+            # Check for invalid float values that are not JSON compliant
+            if not (result == result):  # Check for NaN
+                return None
+            if result == float('inf') or result == float('-inf'):
+                return None
+                
+            return result
         except (ValueError, TypeError):
             return None
     
@@ -225,15 +234,21 @@ class ProperDatabaseManager:
     def save_sector_data(self, csv_data: pd.DataFrame, sector_name: str, trade_date: Optional[date] = None) -> bool:
         """Save sector constituents data to Supabase - keeping existing sector_data table"""
         try:
+            print(f"🔍 DEBUG: Processing {len(csv_data)} rows for {sector_name} sector")
+            
             # Convert DataFrame to list of dictionaries for the existing sector_data table
             records = []
+            grand_found = False
             for _, row in csv_data.iterrows():
+                symbol = str(row.get('Symbol', '')).strip()
+                last_price = self._parse_number(row.get('Last', ''))
+                
                 record = {
-                    'symbol': str(row.get('Symbol', '')).strip(),
+                    'symbol': symbol,
                     'open_price': self._parse_number(row.get('Open', '')),
                     'high_price': self._parse_number(row.get('High', '')),
                     'low_price': self._parse_number(row.get('Low', '')),
-                    'last_price': self._parse_number(row.get('Last', '')),
+                    'last_price': last_price,
                     'change': str(row.get('Change', '')),
                     'percent_change': str(row.get('% Change', '')),
                     'bid': str(row.get('Bid', '')),
@@ -245,15 +260,118 @@ class ProperDatabaseManager:
                     'created_at': datetime.now().isoformat()
                 }
                 records.append(record)
+                
+                # Track if GRAND is found
+                if symbol == 'GRAND':
+                    grand_found = True
+                    print(f"✅ DEBUG: GRAND record created for database: symbol={symbol}, last_price={last_price}, sector={sector_name}")
+            
+            if sector_name == 'service' and not grand_found:
+                print(f"❌ DEBUG: GRAND NOT found when processing {sector_name} sector records")
+            
+            print(f"🔍 DEBUG: Created {len(records)} records for {sector_name} sector")
+            
+            # Clear existing records for this sector and trade_date first
+            delete_result = self.client.table('sector_data').delete().eq('sector', sector_name).eq('trade_date', trade_date.isoformat() if trade_date else None).execute()
+            print(f"🗑️  DEBUG: Deleted {len(delete_result.data) if delete_result.data else 0} existing {sector_name} records for {trade_date}")
             
             # Insert data to sector_data table (existing table)
             result = self.client.table('sector_data').insert(records).execute()
-            print(f"✅ Saved {len(records)} {sector_name} sector records")
+            inserted_count = len(result.data) if result.data else 0
+            print(f"✅ DEBUG: Inserted {inserted_count} {sector_name} sector records into database")
+            
+            # Verify GRAND was actually inserted
+            if sector_name == 'service' and grand_found:
+                verify_result = self.client.table('sector_data').select('symbol, last_price').eq('symbol', 'GRAND').eq('trade_date', trade_date.isoformat() if trade_date else None).execute()
+                if verify_result.data:
+                    print(f"✅ DEBUG: GRAND verified in database: {verify_result.data[0]}")
+                else:
+                    print(f"❌ DEBUG: GRAND NOT found in database after insert!")
+            
             return True
             
         except Exception as e:
             print(f"❌ Error saving {sector_name} sector data: {e}")
+            import traceback
+            print(f"💥 DEBUG: Full traceback: {traceback.format_exc()}")
             return False
+    
+    def add_portfolio_symbol(self, symbol: str) -> bool:
+        """Add a symbol to user's portfolio"""
+        try:
+            record = {
+                'symbol': symbol.upper().strip(),
+                'added_at': datetime.now().isoformat()
+            }
+            
+            # First check if symbol already exists
+            existing = self.client.table('portfolio_symbols').select('*').eq('symbol', symbol.upper().strip()).execute()
+            if existing.data:
+                print(f"📋 Symbol {symbol} already in portfolio")
+                return True
+            
+            # Insert new portfolio symbol
+            result = self.client.table('portfolio_symbols').insert(record).execute()
+            print(f"✅ Added {symbol} to portfolio")
+            return True
+            
+        except Exception as e:
+            error_msg = str(e)
+            if 'relation "public.portfolio_symbols" does not exist' in error_msg or 'table "portfolio_symbols" does not exist' in error_msg:
+                print(f"❌ Portfolio table doesn't exist. Please create 'portfolio_symbols' table in Supabase with columns: symbol (text), added_at (timestamptz)")
+                print("   SQL: CREATE TABLE portfolio_symbols (id SERIAL PRIMARY KEY, symbol TEXT UNIQUE NOT NULL, added_at TIMESTAMPTZ DEFAULT NOW());")
+            else:
+                print(f"❌ Error adding {symbol} to portfolio: {e}")
+            return False
+    
+    def remove_portfolio_symbol(self, symbol: str) -> bool:
+        """Remove a symbol from user's portfolio"""
+        try:
+            result = self.client.table('portfolio_symbols').delete().eq('symbol', symbol.upper().strip()).execute()
+            print(f"✅ Removed {symbol} from portfolio")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error removing {symbol} from portfolio: {e}")
+            return False
+    
+    def get_portfolio_symbols(self) -> list:
+        """Get all symbols in user's portfolio sorted A-Z"""
+        try:
+            result = self.client.table('portfolio_symbols').select('*').order('symbol', desc=False).execute()
+            symbols = [item['symbol'] for item in result.data] if result.data else []
+            print(f"📋 Retrieved {len(symbols)} portfolio symbols (sorted A-Z)")
+            return symbols
+            
+        except Exception as e:
+            print(f"❌ Error retrieving portfolio symbols: {e}")
+            return []
+    
+    def get_missing_sector_symbols(self) -> list:
+        """Find symbols that have NVDR/Short Sales data but no sector data"""
+        try:
+            # Get all symbols with NVDR data
+            nvdr_result = self.client.table('nvdr_trading').select('symbol').execute()
+            nvdr_symbols = set(item['symbol'] for item in nvdr_result.data) if nvdr_result.data else set()
+            
+            # Get all symbols with Short Sales data  
+            short_result = self.client.table('short_sales_trading').select('symbol').execute()
+            short_symbols = set(item['symbol'] for item in short_result.data) if short_result.data else set()
+            
+            # Get all symbols with sector data
+            sector_result = self.client.table('sector_data').select('symbol').execute()
+            sector_symbols = set(item['symbol'] for item in sector_result.data) if sector_result.data else set()
+            
+            # Find symbols that have trading data but no sector data
+            trading_symbols = nvdr_symbols.union(short_symbols)
+            missing_symbols = trading_symbols - sector_symbols
+            
+            print(f"📊 Found {len(missing_symbols)} symbols with trading data but no sector data: {sorted(missing_symbols)[:10]}...")
+            return sorted(missing_symbols)
+            
+        except Exception as e:
+            print(f"❌ Error finding missing sector symbols: {e}")
+            return []
 
 
 def get_proper_db():
