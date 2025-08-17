@@ -36,8 +36,10 @@ class ProperDatabaseManager:
             
             # Check for invalid float values that are not JSON compliant
             if not (result == result):  # Check for NaN
+                print(f"⚠️  DEBUG: Found NaN value when parsing '{value}' -> '{cleaned}'")
                 return None
             if result == float('inf') or result == float('-inf'):
+                print(f"⚠️  DEBUG: Found infinity value when parsing '{value}' -> '{cleaned}' = {result}")
                 return None
                 
             return result
@@ -294,6 +296,120 @@ class ProperDatabaseManager:
             print(f"❌ Error saving {sector_name} sector data: {e}")
             import traceback
             print(f"💥 DEBUG: Full traceback: {traceback.format_exc()}")
+            return False
+    
+    def save_set_index_data(self, data: list) -> dict:
+        """Save SET index data to the database"""
+        try:
+            if not data:
+                return {"status": "success", "message": "No index data to save", "saved_count": 0}
+            
+            # Get current date for trade_date
+            trade_date = datetime.now().date()
+            
+            # Check if data for today already exists
+            existing = self.client.table('set_index').select('*').eq('trade_date', trade_date.isoformat()).execute()
+            
+            if existing.data:
+                # Delete existing data for today before inserting new data
+                delete_result = self.client.table('set_index').delete().eq('trade_date', trade_date.isoformat()).execute()
+                print(f"🗑️ Deleted {len(existing.data)} existing records for {trade_date}")
+            
+            # Prepare records for insertion
+            records = []
+            for item in data:
+                # Parse change value to extract numeric part
+                change_str = str(item.get('change', ''))
+                change_value = None
+                if change_str and change_str != '-':
+                    # Extract the first number (including sign) from change string
+                    import re
+                    change_match = re.search(r'([+-]?\d+\.?\d*)', change_str)
+                    if change_match:
+                        change_value = self._parse_number(change_match.group(1))
+                
+                record = {
+                    'trade_date': trade_date.isoformat(),
+                    'index_name': str(item.get('index', '')).strip(),
+                    'last_value': self._parse_number(item.get('last', '')),
+                    'change_value': change_value,
+                    'change_text': change_str,
+                    'volume_thousands': self._parse_number(item.get('volume', '')) if item.get('volume') not in ['-', ''] else None,
+                    'value_million_baht': self._parse_number(item.get('value', '')) if item.get('value') not in ['-', ''] else None,
+                    'created_at': datetime.now().isoformat()
+                }
+                
+                # Only add record if index_name is not empty
+                if record['index_name']:
+                    records.append(record)
+            
+            if not records:
+                return {"status": "success", "message": "No valid index data to save", "saved_count": 0}
+            
+            # Insert new records
+            result = self.client.table('set_index').insert(records).execute()
+            
+            saved_count = len(result.data) if result.data else len(records)
+            print(f"✅ Saved {saved_count} SET index records for {trade_date}")
+            
+            return {
+                "status": "success", 
+                "message": f"Successfully saved {saved_count} SET index records",
+                "saved_count": saved_count,
+                "trade_date": trade_date.isoformat()
+            }
+            
+        except Exception as e:
+            print(f"❌ Error saving SET index data: {str(e)}")
+            raise e
+    
+    def get_latest_set_index_data(self) -> dict:
+        """Get the latest SET index data from database"""
+        try:
+            # Get the most recent trade_date
+            latest_date_result = self.client.table('set_index').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+            
+            if not latest_date_result.data:
+                return {"status": "success", "data": [], "trade_date": None, "message": "No SET index data found"}
+            
+            latest_date = latest_date_result.data[0]['trade_date']
+            
+            # Get all indices for the latest date
+            result = self.client.table('set_index').select('*').eq('trade_date', latest_date).order('index_name', desc=False).execute()
+            
+            if not result.data:
+                return {"status": "success", "data": [], "trade_date": latest_date, "message": "No data for latest date"}
+            
+            # Convert database format back to API format
+            data = []
+            for record in result.data:
+                data.append({
+                    'index': record['index_name'],
+                    'last': str(record['last_value']) if record['last_value'] is not None else '',
+                    'change': record['change_text'] or '',
+                    'volume': str(int(record['volume_thousands'])) if record['volume_thousands'] is not None else '-',
+                    'value': str(record['value_million_baht']) if record['value_million_baht'] is not None else '-'
+                })
+            
+            return {
+                "status": "success",
+                "data": data,
+                "trade_date": latest_date,
+                "record_count": len(data)
+            }
+            
+        except Exception as e:
+            print(f"❌ Error getting SET index data: {str(e)}")
+            return {"status": "error", "data": [], "trade_date": None, "error": str(e)}
+    
+    def is_set_index_data_fresh(self) -> bool:
+        """Check if SET index data exists for today"""
+        try:
+            today = datetime.now().date()
+            result = self.client.table('set_index').select('trade_date').eq('trade_date', today.isoformat()).limit(1).execute()
+            return len(result.data) > 0
+        except Exception as e:
+            print(f"❌ Error checking SET index data freshness: {str(e)}")
             return False
     
     def add_portfolio_symbol(self, symbol: str) -> bool:

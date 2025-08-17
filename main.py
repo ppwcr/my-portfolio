@@ -488,9 +488,71 @@ async def export_sector_constituents(slug: str = Query(..., pattern="^(agro|cons
         )
 
 
-@app.post("/api/save-to-database")
-async def save_to_database():
-    """Save investor type (SET market) and all sector data to Supabase database"""
+@app.post("/api/auto-update-database")
+async def auto_update_database():
+    """Auto-update database with daily limits and weekend skip"""
+    try:
+        # Check if today is weekend
+        today = datetime.now()
+        if today.weekday() >= 5:  # Saturday = 5, Sunday = 6
+            return {
+                "success": True,
+                "updated": False,
+                "message": "Weekend - Market is closed, no update needed",
+                "details": {"reason": "weekend", "day": today.strftime("%A")}
+            }
+        
+        db = get_proper_db()
+        today_date = today.date()
+        
+        # Check if we already updated today by looking at any table's latest data
+        update_needed = False
+        update_reasons = []
+        
+        # Check each data source
+        checks = {
+            "investor_summary": "No fresh investor data for today",
+            "nvdr_trading": "No fresh NVDR data for today", 
+            "short_sales_trading": "No fresh short sales data for today",
+            "sector_data": "No fresh sector data for today"
+        }
+        
+        for table_name, reason in checks.items():
+            try:
+                result = db.client.table(table_name).select('trade_date').eq('trade_date', today_date.isoformat()).limit(1).execute()
+                if not result.data:
+                    update_needed = True
+                    update_reasons.append(reason)
+            except Exception as e:
+                # If table doesn't exist or has issues, we need to update
+                update_needed = True
+                update_reasons.append(f"{table_name}: {str(e)}")
+        
+        if not update_needed:
+            return {
+                "success": True,
+                "updated": False,
+                "message": "Database is already up to date for today",
+                "details": {"date": today_date.isoformat(), "all_tables": "current"}
+            }
+        
+        # Proceed with update
+        update_progress("running", "auto-update", 0, "🔄 Starting automatic daily update...")
+        
+        return await save_to_database_internal()
+        
+    except Exception as e:
+        update_progress("error", "failed", 0, f"❌ Auto-update error: {str(e)}")
+        return {
+            "success": False,
+            "updated": False,
+            "message": f"Auto-update failed: {str(e)}",
+            "details": {"error": str(e), "timestamp": datetime.now().isoformat()}
+        }
+
+
+async def save_to_database_internal():
+    """Internal function to save all data to database"""
     try:
         # Initialize progress
         update_progress("starting", "Initializing", 0, "Starting database save operation...")
@@ -717,22 +779,203 @@ async def save_to_database():
             update_progress("completed", "partial", 100, f"⚠️ Partial success - {success_count}/{total_count} datasets saved", 
                           {"details": results})
         
-        return JSONResponse(
-            status_code=200 if total_success else 207,
-            content={
-                "success": total_success,
-                "message": "Data saved to database" if total_success else "Partial success",
-                "details": results,
-                "trade_date": trade_date.isoformat() if trade_date else None
-            }
-        )
+        return {
+            "success": total_success,
+            "updated": True,
+            "message": "Data saved to database" if total_success else "Partial success",
+            "details": results,
+            "trade_date": trade_date.isoformat() if trade_date else None
+        }
         
     except Exception as e:
         update_progress("error", "failed", 0, f"❌ Error: {str(e)}")
+        return {
+            "success": False,
+            "updated": False,
+            "message": f"Database save failed: {str(e)}",
+            "details": {"error": str(e)},
+            "trade_date": None
+        }
+
+
+@app.post("/api/save-to-database")
+async def save_to_database():
+    """Public endpoint for manual database save"""
+    try:
+        result = await save_to_database_internal()
+        return JSONResponse(
+            status_code=200 if result["success"] else 207,
+            content=result
+        )
+    except Exception as e:
         raise HTTPException(
             status_code=500,
             detail={
                 "error": "Database save failed",
+                "message": str(e)
+            }
+        )
+
+
+@app.post("/api/test-update-database")
+async def test_update_database():
+    """Test endpoint to trigger database update (bypasses weekend check)"""
+    try:
+        db = get_proper_db()
+        today_date = datetime.now().date()
+        
+        # Force update for testing (bypass weekend and daily checks)
+        update_progress("running", "test-update", 0, "🧪 Starting test update...")
+        
+        return await save_to_database_internal()
+        
+    except Exception as e:
+        update_progress("error", "failed", 0, f"❌ Test update error: {str(e)}")
+        return {
+            "success": False,
+            "updated": False,
+            "message": f"Test update failed: {str(e)}",
+            "details": {"error": str(e), "timestamp": datetime.now().isoformat()}
+        }
+
+
+@app.get("/api/set-index")
+async def get_set_index():
+    """Get SET index data with daily caching (database + file fallback)"""
+    try:
+        # First check file cache to see if data is fresh (today)
+        latest_file = Path("_out/set_index_latest.json")
+        today = datetime.now().date()
+        file_is_fresh = False
+        
+        if latest_file.exists():
+            # Check if file was modified today
+            file_mtime = datetime.fromtimestamp(latest_file.stat().st_mtime).date()
+            file_is_fresh = (file_mtime == today)
+            
+            if file_is_fresh:
+                print("📊 Using fresh SET index data from file cache")
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                    if file_data.get('success') and file_data.get('data'):
+                        return {
+                            "success": True,
+                            "data": file_data['data'],
+                            "timestamp": f"Cached data from {file_data.get('timestamp', 'unknown time')}",
+                            "source": "file_cache",
+                            "scraped_at": file_data.get('scraped_at', datetime.now().isoformat())
+                        }
+        
+        # Try database first if available
+        try:
+            db = get_proper_db()
+            if db.is_set_index_data_fresh():
+                print("📊 Using fresh SET index data from database")
+                db_result = db.get_latest_set_index_data()
+                if db_result['status'] == 'success' and db_result['data']:
+                    return {
+                        "success": True,
+                        "data": db_result['data'],
+                        "timestamp": f"Database data for {db_result['trade_date']}",
+                        "source": "database",
+                        "scraped_at": datetime.now().isoformat()
+                    }
+        except Exception as db_error:
+            print(f"⚠️ Database check failed: {db_error}")
+        
+        # If no fresh data, scrape new data
+        print("🔄 No fresh data found, scraping new SET index data...")
+        
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "scrape_set_index.py", "--save-db"],
+                cwd=Path.cwd(),
+                capture_output=True,
+                text=True,
+                timeout=45
+            )
+            
+            if result.returncode == 0:
+                # After successful scraping, try database first, then file
+                try:
+                    db = get_proper_db()
+                    db_result = db.get_latest_set_index_data()
+                    if db_result['status'] == 'success' and db_result['data']:
+                        return {
+                            "success": True,
+                            "data": db_result['data'],
+                            "timestamp": f"Fresh data for {db_result['trade_date']}",
+                            "source": "scraped_to_database",
+                            "scraped_at": datetime.now().isoformat()
+                        }
+                except Exception as db_error:
+                    print(f"⚠️ Database retrieval failed after scraping: {db_error}")
+                
+                # Fallback to file
+                if latest_file.exists():
+                    with open(latest_file, 'r', encoding='utf-8') as f:
+                        file_data = json.load(f)
+                        if file_data.get('success') and file_data.get('data'):
+                            return {
+                                "success": True,
+                                "data": file_data['data'],
+                                "timestamp": f"Fresh data: {file_data.get('timestamp', 'unknown time')}",
+                                "source": "scraped_to_file",
+                                "scraped_at": file_data.get('scraped_at', datetime.now().isoformat())
+                            }
+                
+                raise Exception("Failed to retrieve data after successful scraping")
+            else:
+                raise Exception(f"Scraping failed: {result.stderr}")
+                
+        except Exception as scrape_error:
+            # Final fallback: try any available data (database, then file)
+            print(f"⚠️ Scraping failed: {scrape_error}, trying fallback...")
+            
+            try:
+                db = get_proper_db()
+                db_result = db.get_latest_set_index_data()
+                if db_result['status'] == 'success' and db_result['data']:
+                    return {
+                        "success": True,
+                        "data": db_result['data'],
+                        "timestamp": f"Cached data from {db_result['trade_date']} (scraping failed)",
+                        "source": "database_fallback",
+                        "warning": f"Using cached data due to scraping error: {str(scrape_error)}",
+                        "scraped_at": datetime.now().isoformat()
+                    }
+            except Exception:
+                pass
+            
+            if latest_file.exists():
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                    if file_data.get('success') and file_data.get('data'):
+                        return {
+                            "success": True,
+                            "data": file_data['data'],
+                            "timestamp": f"Cached data: {file_data.get('timestamp', 'unknown time')} (scraping failed)",
+                            "source": "file_fallback",
+                            "warning": f"Using cached file data due to scraping error: {str(scrape_error)}",
+                            "scraped_at": file_data.get('scraped_at', datetime.now().isoformat())
+                        }
+            
+            # Ultimate fallback: return error
+            return {
+                "success": False,
+                "error": f"Failed to fetch SET index data: {str(scrape_error)}",
+                "data": [],
+                "timestamp": None,
+                "source": "error",
+                "scraped_at": datetime.now().isoformat()
+            }
+                
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to load SET index data",
                 "message": str(e)
             }
         )
@@ -820,7 +1063,22 @@ async def get_portfolio_dashboard():
         if latest_trade_date:
             # Get all stocks with prices from sector_data
             stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_trade_date).execute()
-            stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+            
+            # Clean the data to prevent JSON compliance issues
+            stocks_data = {}
+            if stocks_result.data:
+                for item in stocks_result.data:
+                    # Only include stocks with valid last_price
+                    if item.get('last_price') and item['last_price'] != 0:
+                        # Clean change and percent_change values
+                        cleaned_item = {
+                            'symbol': item['symbol'],
+                            'last_price': item['last_price'],
+                            'sector': item['sector'],
+                            'change': item.get('change', '0.00') or '0.00',
+                            'percent_change': item.get('percent_change', '0.00') or '0.00'
+                        }
+                        stocks_data[item['symbol']] = cleaned_item
             print(f"📊 DEBUG: Found {len(stocks_data)} stocks in sector_data for date {latest_trade_date}")
             if 'GRAND' in stocks_data:
                 print(f"✅ DEBUG: GRAND found in sector_data: {stocks_data['GRAND']}")
@@ -835,15 +1093,14 @@ async def get_portfolio_dashboard():
             short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', latest_trade_date).execute()
             short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
             
-            # Combine all data
-            all_symbols = set(stocks_data.keys()) | set(nvdr_data.keys()) | set(short_data.keys())
-            
-            for symbol in sorted(all_symbols):  # Sort symbols alphabetically A-Z
-                stock_info = stocks_data.get(symbol, {})
+            # Only include symbols that have sector data (price information)
+            # This prevents JSON compliance issues with symbols that only have NVDR/short data
+            for symbol in sorted(stocks_data.keys()):  # Only process symbols with sector data
+                stock_info = stocks_data[symbol]
                 
-                # Debug: Check symbols with NVDR data but no sector data
-                if symbol in nvdr_data and not stock_info:
-                    print(f"⚠️  DEBUG: {symbol} has NVDR data ({nvdr_data[symbol]}) but no sector data (price shows 0)")
+                # Skip symbols without valid last_price
+                if not stock_info.get('last_price'):
+                    continue
                 
                 # Parse change and percent_change strings to numbers
                 change_str = stock_info.get('change', '')
@@ -856,8 +1113,17 @@ async def get_portfolio_dashboard():
                     try:
                         # Remove + sign and convert to float
                         cleaned = str(value).replace('+', '').replace(',', '').strip()
-                        return float(cleaned) if cleaned != '-' else 0
-                    except (ValueError, TypeError):
+                        if cleaned == '-' or cleaned == '':
+                            return 0
+                        result = float(cleaned)
+                        # Check for invalid float values
+                        import math
+                        if math.isnan(result) or math.isinf(result):
+                            print(f"⚠️  DEBUG: parse_change found invalid value: '{value}' -> '{cleaned}' -> {result}")
+                            return 0
+                        return result
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️  DEBUG: parse_change error with '{value}': {e}")
                         return 0
                 
                 def parse_percent(value):
@@ -866,16 +1132,18 @@ async def get_portfolio_dashboard():
                     try:
                         # Remove % sign and + sign, then convert to float
                         cleaned = str(value).replace('%', '').replace('+', '').replace(',', '').strip()
-                        return float(cleaned) if cleaned != '-' else 0
-                    except (ValueError, TypeError):
+                        if cleaned == '-' or cleaned == '':
+                            return 0
+                        result = float(cleaned)
+                        # Check for invalid float values
+                        import math
+                        if math.isnan(result) or math.isinf(result):
+                            print(f"⚠️  DEBUG: parse_percent found invalid value: '{value}' -> '{cleaned}' -> {result}")
+                            return 0
+                        return result
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️  DEBUG: parse_percent error with '{value}': {e}")
                         return 0
-                
-                # Debug: Check for symbols with NVDR but no sector data
-                has_nvdr = nvdr_data.get(symbol, 0) != 0
-                has_sector = bool(stock_info.get('last_price', 0))
-                
-                if has_nvdr and not has_sector:
-                    print(f"⚠️  DEBUG: {symbol} has NVDR data ({nvdr_data.get(symbol, 0)}) but no sector data (price shows 0)")
                 
                 portfolio_stocks.append({
                     'symbol': symbol,
@@ -887,12 +1155,50 @@ async def get_portfolio_dashboard():
                     'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,  # Keep in Baht
                 })
         
-        return JSONResponse(content={
+        # Validate JSON compliance before returning
+        def is_json_safe(value):
+            """Check if a value is JSON compliant"""
+            import math
+            if isinstance(value, float):
+                return not (math.isnan(value) or math.isinf(value))
+            return True
+            
+        def validate_json_data(data, path=""):
+            """Recursively validate JSON data for compliance"""
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if not validate_json_data(value, f"{path}.{key}"):
+                        print(f"❌ JSON compliance error at {path}.{key}: {value} ({type(value)})")
+                        return False
+            elif isinstance(data, list):
+                for i, item in enumerate(data):
+                    if not validate_json_data(item, f"{path}[{i}]"):
+                        return False
+            elif not is_json_safe(data):
+                print(f"❌ JSON compliance error at {path}: {data} ({type(data)})")
+                return False
+            return True
+        
+        response_data = {
             'trade_date': latest_trade_date,
             'investor_summary': investor_summary,
             'sector_summary': sector_summary,
             'portfolio_stocks': portfolio_stocks
-        })
+        }
+        
+        # Validate before returning
+        if not validate_json_data(response_data):
+            print("❌ Dashboard response contains non-JSON compliant data")
+            # Return a safe fallback response
+            return JSONResponse(content={
+                'trade_date': latest_trade_date,
+                'investor_summary': [],
+                'sector_summary': [],
+                'portfolio_stocks': [],
+                'error': 'Data contains invalid float values'
+            })
+        
+        return JSONResponse(content=response_data)
         
     except Exception as e:
         raise HTTPException(
