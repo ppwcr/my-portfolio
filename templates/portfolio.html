@@ -43,6 +43,19 @@
             backdrop-filter: blur(2px);
             z-index: 12;
         }
+
+        /* Mini chart styling */
+        .chart-mini {
+            max-width: 64px;
+            max-height: 32px;
+            border-radius: 4px;
+        }
+        
+        .chart-mini svg {
+            width: 64px;
+            height: 32px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 text-slate-900">
@@ -219,6 +232,7 @@
                             <th class="py-2 px-3 text-right">% Change</th>
                             <th class="py-2 px-3 text-right">NVDR (Baht)</th>
                             <th class="py-2 px-3 text-right">Short Sales (Baht)</th>
+                            <th class="py-2 px-3 text-center">Chart</th>
                             <th class="py-2 px-3 text-center">Action</th>
                         </tr>
                     </thead>
@@ -799,6 +813,12 @@
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr, 0)}</td>
                     <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortBaht)}">${formatNumber(stock.shortBaht, 0)}</td>
                     <td class="py-2 px-3 text-center">
+                        <div class="w-16 h-8 flex items-center justify-center">
+                            <div id="loading-${stock.symbol}" class="text-xs text-slate-400">...</div>
+                            <div id="chart-${stock.symbol}" class="chart-mini hidden" data-symbol="${stock.symbol}"></div>
+                        </div>
+                    </td>
+                    <td class="py-2 px-3 text-center">
                         <button onclick="removeFromPortfolio('${stock.symbol}')" 
                                 class="px-2 py-1 rounded text-xs bg-red-100 text-red-700 hover:bg-red-200" 
                                 title="Remove from portfolio">
@@ -807,6 +827,13 @@
                     </td>
                 </tr>
             `).join('');
+            
+            // Create mini charts for each symbol with longer delays
+            sortedData.forEach((stock, index) => {
+                setTimeout(() => {
+                    createMiniChart(stock.symbol);
+                }, index * 300); // 300ms delay between each chart to prevent rate limiting
+            });
         }
 
         function renderPortfolioTable(data) {
@@ -944,6 +971,138 @@
             a.download = `my-portfolio-${new Date().toISOString().split('T')[0]}.csv`;
             a.click();
             URL.revokeObjectURL(url);
+        }
+
+        // Create mini chart for a symbol using SVG
+        async function createMiniChart(symbol, retryCount = 0) {
+            try {
+                const canvas = document.getElementById(`chart-${symbol}`);
+                const loading = document.getElementById(`loading-${symbol}`);
+                if (!canvas || !loading) return;
+
+                // Fetch chart data with retry logic and cache busting
+                let response;
+                try {
+                    const timestamp = Date.now();
+                    const requestId = Math.random().toString(36).substring(7);
+                    const url = `/api/series/symbol/${symbol}?_t=${timestamp}&_id=${requestId}`;
+                    console.log(`🔗 Fetching ${symbol} with requestId: ${requestId}`);
+                    response = await fetch(url);
+                } catch (fetchError) {
+                    console.warn(`Network error fetching data for ${symbol}:`, fetchError);
+                    if (retryCount < 2) {
+                        // Show retry indicator
+                        loading.textContent = retryCount === 0 ? '↻' : '↻↻';
+                        // Retry after 1 second
+                        setTimeout(() => createMiniChart(symbol, retryCount + 1), 1000);
+                        return;
+                    }
+                    loading.textContent = '!';
+                    return;
+                }
+
+                if (!response.ok) {
+                    console.warn(`Failed to fetch chart data for ${symbol}: ${response.status}`);
+                    if (retryCount < 2) {
+                        // Show retry indicator
+                        loading.textContent = retryCount === 0 ? '↻' : '↻↻';
+                        // Retry after 1 second
+                        setTimeout(() => createMiniChart(symbol, retryCount + 1), 1000);
+                        return;
+                    }
+                    loading.textContent = '!';
+                    return;
+                }
+
+                const data = await response.json();
+                console.log(`📥 Received data for ${symbol}: close=${data.latest?.close}, change=${data.latest?.change}`);
+                
+                if (!data.series || data.series.length === 0) {
+                    console.warn(`No chart data for ${symbol}`);
+                    loading.textContent = '-';
+                    return;
+                }
+
+                // Verify the data is for the correct symbol by checking the latest close price
+                // against the portfolio data
+                const portfolioRow = myPortfolioData.find(stock => stock.symbol === symbol);
+                if (portfolioRow && Math.abs(data.latest.close - portfolioRow.close) > 1) {
+                    console.error(`❌ DATA MISMATCH for ${symbol}: API close=${data.latest.close}, Portfolio close=${portfolioRow.close}`);
+                    console.error(`❌ This suggests the API returned wrong data for ${symbol}`);
+                    
+                    // Retry on frontend if we detect wrong data
+                    if (retryCount < 2) {
+                        console.log(`🔄 Retrying ${symbol} due to data mismatch...`);
+                        loading.textContent = retryCount === 0 ? '↻' : '↻↻';
+                        setTimeout(() => createMiniChart(symbol, retryCount + 1), 1500);
+                        return;
+                    }
+                    
+                    loading.textContent = '!';
+                    return; // Don't create chart with wrong data after max retries
+                }
+
+                // Debug: Log the data for this symbol
+                console.log(`Chart data for ${symbol}:`, {
+                    firstValue: data.series[0]?.value,
+                    lastValue: data.series[data.series.length - 1]?.value,
+                    change: data.latest.change,
+                    dataPoints: data.series.length,
+                    close: data.latest.close,
+                    date: data.latest.date
+                });
+
+                // Calculate min/max for proper scaling
+                const values = data.series.map(item => item.value);
+                const minValue = Math.min(...values);
+                const maxValue = Math.max(...values);
+                const range = maxValue - minValue;
+                const padding = range * 0.1; // 10% padding
+
+                // Create SVG chart
+                const width = 64;
+                const height = 32;
+                const margin = 2;
+                const chartWidth = width - 2 * margin;
+                const chartHeight = height - 2 * margin;
+
+                // Create SVG element
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('width', width);
+                svg.setAttribute('height', height);
+                svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+                // Create path for the line
+                const points = values.map((value, index) => {
+                    const x = margin + (index / (values.length - 1)) * chartWidth;
+                    const y = margin + chartHeight - ((value - (minValue - padding)) / ((maxValue + padding) - (minValue - padding))) * chartHeight;
+                    return `${x},${y}`;
+                });
+
+                const pathData = `M ${points.join(' L ')}`;
+
+                // Create the path element
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', pathData);
+                path.setAttribute('stroke', data.latest.change >= 0 ? '#10b981' : '#ef4444');
+                path.setAttribute('stroke-width', '1');
+                path.setAttribute('fill', 'none');
+
+                svg.appendChild(path);
+
+                // Replace canvas with SVG
+                canvas.parentNode.replaceChild(svg, canvas);
+
+                // Hide loading
+                loading.classList.add('hidden');
+
+                console.log(`SVG chart created successfully for ${symbol}`);
+
+            } catch (error) {
+                console.error(`Error creating mini chart for ${symbol}:`, error);
+                const loading = document.getElementById(`loading-${symbol}`);
+                if (loading) loading.textContent = '!';
+            }
         }
 
         // Save-to-DB with SSE progress

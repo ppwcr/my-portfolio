@@ -38,6 +38,9 @@ try:
 except Exception:
     HAS_YF = False
 
+# Simple cache for symbol data to avoid repeated yfinance calls
+symbol_cache = {}
+
 
 # Initialize FastAPI app
 app = FastAPI(title="SET Data Export API", version="1.0.0")
@@ -234,6 +237,190 @@ def get_set_index_series():
         return JSONResponse(content={"series": series, "latest": latest})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": "Failed to fetch SET index data", "message": str(e)})
+
+
+@app.get("/api/series/symbol/{symbol}")
+def get_symbol_series(symbol: str):
+    """Return 1-year daily series for a specific symbol.
+
+    Response:
+      {
+        "series": [{"time": "YYYY-MM-DD", "value": float}, ...],
+        "latest": {
+            "date": "YYYY-MM-DD",
+            "close": float,
+            "change": float,
+            "change_percent": float
+        }
+      }
+    """
+    # Check cache first
+    if symbol in symbol_cache:
+        cached_data = symbol_cache[symbol]
+        print(f"📋 Using cached data for {symbol}")
+        return JSONResponse(content=cached_data)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if not HAS_YF:
+                return JSONResponse(status_code=503, content={"error": "Yahoo Finance not available"})
+            
+            # Add .BK suffix for Thai stocks if not already present
+            if not symbol.endswith('.BK'):
+                symbol = f"{symbol}.BK"
+            
+            # Download 1 year of data with cache busting
+            print(f"📊 Fetching data for {symbol} (attempt {attempt + 1})")
+            
+            # Add a delay to prevent rate limiting and allow cache to clear
+            import time
+            time.sleep(0.5)  # Increased delay for better cache clearing
+            
+            # Clear any potential yfinance cache more aggressively
+            try:
+                import yfinance as yf_module
+                if hasattr(yf_module, 'cache'):
+                    yf_module.cache.clear()
+                # Also try to clear any session cache
+                if hasattr(yf_module, 'session'):
+                    yf_module.session.cache.clear()
+                # Force a fresh session
+                if hasattr(yf_module, 'session'):
+                    yf_module.session.close()
+                    yf_module.session = None
+            except:
+                pass
+                
+            df = yf.download(symbol, period="1y", interval="1d", progress=False)
+            
+            # Debug: Check if we got the right data
+            if not df.empty:
+                try:
+                    first_value = df.iloc[0]['Close'] if 'Close' in df.columns else df.iloc[0].iloc[0]
+                    last_value = df.iloc[-1]['Close'] if 'Close' in df.columns else df.iloc[-1].iloc[0]
+                    print(f"🔍 {symbol}: first={first_value}, last={last_value}")
+                    
+                    # Check if we got the wrong symbol's data by looking at the ticker name in the data
+                    if str(first_value).startswith('Ticker'):
+                        ticker_name = str(first_value).split('\n')[0].replace('Ticker', '').strip()
+                        if ticker_name and ticker_name != symbol:
+                            print(f"⚠️  Wrong symbol data detected for {symbol} (got {ticker_name}), retrying...")
+                            if attempt < max_retries - 1:
+                                continue
+                    
+                    # Additional check: if the first value contains a different ticker name
+                    first_value_str = str(first_value)
+                    if 'Ticker' in first_value_str:
+                        # Extract ticker name from the string representation
+                        lines = first_value_str.split('\n')
+                        for line in lines:
+                            if line.strip() and not line.startswith('Ticker') and not line.startswith('Name:') and not line.startswith('dtype:'):
+                                # This should be the ticker name
+                                ticker_in_data = line.strip()
+                                if ticker_in_data != symbol:
+                                    print(f"⚠️  Wrong symbol data detected for {symbol} (data shows {ticker_in_data}), retrying...")
+                                    if attempt < max_retries - 1:
+                                        continue
+                                    break
+                        
+                except Exception as e:
+                    print(f"🔍 {symbol}: debug error - {e}")
+            
+            if df is None or df.empty:
+                return JSONResponse(status_code=404, content={"error": f"No data found for {symbol}"})
+            
+            # Debug: Print basic info
+            if not df.empty:
+                print(f"📈 {symbol}: rows={len(df)}")
+            
+            # Handle MultiIndex columns from yfinance
+            if isinstance(df.columns, pd.MultiIndex):
+                # Reset index to make Date a column
+                df = df.reset_index()
+                # Flatten MultiIndex columns if present
+                new_columns = []
+                for col in df.columns:
+                    if col[0] == 'Date':
+                        new_columns.append('Date')
+                    else:
+                        new_columns.append(col[0])  # Use the first level (Price type)
+                df.columns = new_columns
+            else:
+                df = df.reset_index()
+            
+            df = df.dropna(subset=["Close"]).sort_values("Date")
+            if df.empty:
+                return JSONResponse(status_code=404, content={"error": f"No valid data for {symbol}"})
+
+            # Verify the data looks reasonable for this symbol
+            latest_close = float(df.iloc[-1]["Close"])
+            
+            # Check for suspicious values that indicate wrong data
+            if latest_close > 10000:  # Suspiciously high value
+                print(f"⚠️  Suspicious data for {symbol}: close={latest_close}, retrying...")
+                if attempt < max_retries - 1:
+                    continue
+                return JSONResponse(status_code=500, content={"error": f"Suspicious data returned for {symbol}"})
+            
+            # Additional check: if we got very low values that don't match expected ranges
+            # This catches cases where we get wrong symbol data with very different price ranges
+            if latest_close < 0.1 and symbol not in ['GRAND']:  # GRAND is legitimately very low
+                print(f"⚠️  Suspiciously low data for {symbol}: close={latest_close}, retrying...")
+                if attempt < max_retries - 1:
+                    continue
+
+            series = [
+                {"time": d.strftime("%Y-%m-%d"), "value": float(c)}
+                for d, c in zip(df["Date"], df["Close"]) if pd.notna(c)
+            ]
+
+            latest_row = df.iloc[-1]
+            prev_row = df.iloc[-2] if len(df) >= 2 else None
+            close = float(latest_row["Close"]) if pd.notna(latest_row.get("Close")) else None
+            prev_close = float(prev_row["Close"]) if (prev_row is not None and pd.notna(prev_row.get("Close"))) else None
+            change = (close - prev_close) if (close is not None and prev_close is not None) else 0.0
+            change_pct = (change / prev_close * 100.0) if (prev_close not in (None, 0)) else 0.0
+
+            latest = {
+                "date": latest_row["Date"].strftime("%Y-%m-%d") if isinstance(latest_row["Date"], (pd.Timestamp,)) else str(latest_row["Date"]),
+                "close": close,
+                "change": round(change, 2),
+                "change_percent": round(change_pct, 2),
+            }
+
+            print(f"✅ Successfully fetched data for {symbol} on attempt {attempt + 1}")
+            
+            # Cache the successful result
+            result_data = {"series": series, "latest": latest}
+            symbol_cache[symbol] = result_data
+            
+            return JSONResponse(content=result_data)
+            
+        except Exception as e:
+            print(f"❌ Error fetching {symbol} on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                continue
+            return JSONResponse(status_code=500, content={"error": f"Failed to fetch data for {symbol}", "message": str(e)})
+
+
+@app.post("/api/series/symbol/cache/clear")
+def clear_symbol_cache():
+    """Clear the symbol data cache"""
+    global symbol_cache
+    symbol_cache.clear()
+    print("🗑️  Symbol cache cleared")
+    return JSONResponse(content={"message": "Symbol cache cleared successfully"})
+
+
+@app.get("/api/series/symbol/cache/status")
+def get_cache_status():
+    """Get the current cache status"""
+    global symbol_cache
+    return JSONResponse(content={
+        "cached_symbols": list(symbol_cache.keys()),
+        "cache_size": len(symbol_cache)
+    })
 
 
 @app.get("/portfolio", response_class=HTMLResponse)
