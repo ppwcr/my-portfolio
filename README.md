@@ -240,15 +240,179 @@ Open: **[http://localhost:8000](http://localhost:8000)**
 
 ---
 
-## Windows: easiest way
+## 🖥️ Windows: Easiest Way (Using .bat Files)
 
-Use the included batch files (no copy-paste needed).
+The project includes Windows batch files for easy automation. These are the **simplest way** to use the application on Windows.
 
-- `setup.bat` (run once): creates venv, installs deps, installs Playwright.
-- `start.bat` (every time): starts the server and opens the app URL.
-- `register_update_task.bat` (optional, run once): schedules daily weekday auto-update.
+### 📁 Available .bat Files:
 
-If you don't see these files, pull latest or copy from this README snippets.
+- **`setup.bat`** (run once): Creates virtual environment, installs dependencies, and sets up Playwright
+- **`start.bat`** (every time): Starts the server and opens the app in your browser
+- **`update_database_daily.bat`** (manual): Triggers a database update (server must be running)
+- **`register_update_task.bat`** (optional, run once): Schedules automatic daily weekday updates
+
+### 🚀 **Step-by-Step Windows Setup:**
+
+#### **Step 1: Initial Setup (One-time)**
+```bash
+# Right-click Command Prompt → "Run as administrator"
+# Navigate to your project folder
+cd C:\path\to\my-portfolio
+
+# Run the setup script
+setup.bat
+```
+
+**What setup.bat does:**
+- Creates Python virtual environment (`.venv`)
+- Installs all required packages from `requirements.txt`
+- Installs Playwright and Chromium browser
+- Sets up everything needed to run the application
+
+#### **Step 2: Create Environment File**
+```bash
+# Copy the example environment file
+copy .env.example .env
+
+# Edit .env with your Supabase credentials
+notepad .env
+```
+
+**Add your Supabase credentials to .env:**
+```env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your_service_role_key_here
+```
+
+#### **Step 3: Start the Application**
+```bash
+# Double-click start.bat or run in Command Prompt:
+start.bat
+```
+
+**What start.bat does:**
+- Activates the virtual environment
+- Opens your browser to `http://localhost:8000`
+- Starts the FastAPI server with uvicorn
+
+### ⏰ **Setting Up Automatic Updates:**
+
+#### **Option A: One-Click Setup (Recommended)**
+```bash
+# Run as Administrator
+register_update_task.bat
+```
+
+**What register_update_task.bat does:**
+- Creates a Windows Scheduled Task named "SET_UpdateDatabase"
+- Runs automatically on weekdays (Monday-Friday) at 18:05 (6:05 PM)
+- Skips weekends automatically
+- Requires Administrator privileges
+
+#### **Option B: Manual Task Creation**
+1. Open **Task Scheduler** (search in Start menu)
+2. Click **"Create Basic Task"**
+3. Name: `SET_UpdateDatabase`
+4. Trigger: **Daily** at 18:05
+5. Action: **Start a program**
+6. Program: `C:\path\to\my-portfolio\update_database_daily.bat`
+7. Check **"Run whether user is logged on or not"**
+
+### 🔄 **Manual Database Updates:**
+
+If you want to manually trigger a database update:
+
+```bash
+# Make sure the server is running first (start.bat)
+# Then run:
+update_database_daily.bat
+```
+
+**What update_database_daily.bat does:**
+- Skips weekends (Saturday/Sunday)
+- Calls the API endpoint to update Supabase database
+- Logs success/failure to `update_log.txt`
+
+### 📋 **Daily Workflow:**
+
+1. **Start the application:**
+   ```bash
+   start.bat
+   ```
+
+2. **Use the web interface:**
+   - Browser opens automatically to `http://localhost:8000`
+   - Use the floating panel to export data
+
+3. **Close when done:**
+   - Press `Ctrl+C` in the Command Prompt window
+   - Or close the Command Prompt window
+
+### ⚠️ **Important Notes:**
+
+- **Administrator Rights:** `register_update_task.bat` needs Administrator privileges
+- **Server Must Be Running:** Automatic updates only work if the server is running
+- **Python Required:** Make sure Python 3.10+ is installed
+- **Environment File:** Don't forget to create your `.env` file
+- **Weekend Skip:** Automatic updates skip Saturdays and Sundays
+
+### 🔧 **Troubleshooting Windows .bat Files:**
+
+**If setup.bat fails:**
+```bash
+# Check Python installation
+python --version
+
+# Install Python 3.10+ from python.org if needed
+# Then run setup.bat again
+```
+
+**If start.bat doesn't work:**
+```bash
+# Check if virtual environment exists
+dir .venv
+
+# If missing, run setup.bat again
+setup.bat
+```
+
+**If automatic updates don't work:**
+```bash
+# Check if task was created
+schtasks /query /tn SET_UpdateDatabase
+
+# Check if server is running
+curl http://localhost:8000
+
+# Check update logs
+type update_log.txt
+```
+
+**If you get permission errors:**
+- Right-click Command Prompt → "Run as administrator"
+- Make sure you're in the correct project directory
+
+### 🎯 **Quick Commands Reference:**
+
+```bash
+# First time setup
+setup.bat
+
+# Start the application
+start.bat
+
+# Manual database update (server must be running)
+update_database_daily.bat
+
+# Schedule automatic updates (run as Administrator)
+register_update_task.bat
+
+# Check scheduled tasks
+schtasks /query /tn SET_UpdateDatabase
+
+# Remove scheduled task
+schtasks /delete /tn SET_UpdateDatabase /f
+```
 
 ---
 
