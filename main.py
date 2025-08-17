@@ -17,6 +17,11 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional, Tuple
 
+# Windows-specific asyncio event loop policy fix
+if sys.platform == "win32":
+    # Set event loop policy to avoid issues with subprocess on Windows
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -125,11 +130,18 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
     """
     print(f"Running command: {' '.join(cmd)}")
     
+    # Windows-specific process creation parameters
+    kwargs = {}
+    if sys.platform == "win32":
+        # On Windows, use creation flags to handle subprocess properly
+        kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+    
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            **kwargs
         )
         
         stdout, stderr = await asyncio.wait_for(
@@ -137,16 +149,29 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
             timeout=timeout
         )
         
+        # Use proper encoding detection for Windows
+        encoding = 'utf-8'
+        if sys.platform == "win32":
+            # Try to detect Windows encoding
+            import locale
+            try:
+                encoding = locale.getpreferredencoding() or 'utf-8'
+            except:
+                encoding = 'cp1252'  # Common Windows encoding fallback
+        
         return (
             proc.returncode,
-            stdout.decode('utf-8', errors='replace'),
-            stderr.decode('utf-8', errors='replace')
+            stdout.decode(encoding, errors='replace'),
+            stderr.decode(encoding, errors='replace')
         )
         
     except asyncio.TimeoutError:
         # Kill the process if it's still running
-        if proc and proc.returncode is None:
-            proc.terminate()
+        if 'proc' in locals() and proc and proc.returncode is None:
+            if sys.platform == "win32":
+                proc.kill()  # On Windows, use kill() directly
+            else:
+                proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
@@ -158,6 +183,13 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
             124,  # Standard timeout exit code
             "",
             f"Command timed out after {timeout} seconds: {' '.join(cmd)}"
+        )
+    except Exception as e:
+        # Catch other subprocess errors, particularly on Windows
+        return (
+            1,  # Generic error exit code
+            "",
+            f"Subprocess error: {str(e)}"
         )
 
 
@@ -837,7 +869,21 @@ async def save_to_database():
         # Initialize progress
         update_progress("starting", "Initializing", 0, "Starting database save operation...")
         
-        db = get_proper_db()
+        # Initialize database connection with error handling
+        try:
+            db = get_proper_db()
+            update_progress("running", "db_connected", 5, "Database connection established")
+        except Exception as db_error:
+            error_msg = f"Failed to connect to database: {str(db_error)}"
+            update_progress("error", "db_failed", 0, error_msg)
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "Database connection failed",
+                    "message": str(db_error),
+                    "platform": sys.platform
+                }
+            )
         results = {"investor_data": False, "sector_data": {}, "nvdr_data": False, "short_sales_data": False}
         
         # Initialize trade_date early to avoid reference errors
@@ -881,7 +927,13 @@ async def save_to_database():
             results["investor_data"] = db.save_investor_summary(investor_df, trade_date)
             update_progress("running", "investor_saved", 30, f"Saved {len(investor_df)} investor records")
         else:
-            update_progress("running", "investor_failed", 25, "Failed to scrape investor data")
+            error_msg = f"Failed to scrape investor data (exit_code: {exit_code})"
+            if stderr:
+                error_msg += f" - {stderr_tail(stderr)}"
+            update_progress("running", "investor_failed", 25, error_msg)
+            print(f"❌ Investor scraping failed: {error_msg}")
+            print(f"   stdout: {stdout}")
+            print(f"   stderr: {stderr}")
         
         # Step 2: Get all sector data
         update_progress("running", "sector_scraping", 35, "Scraping sector data...")
@@ -892,6 +944,15 @@ async def save_to_database():
         
         cmd = [sys.executable, "scrape_sector_data.py", "--outdir", str(outdir)]
         exit_code, stdout, stderr = await run_cmd(cmd, timeout=120)
+        
+        if exit_code != 0:
+            error_msg = f"Sector scraping had issues (exit_code: {exit_code})"
+            if stderr:
+                error_msg += f" - {stderr_tail(stderr)}"
+            print(f"⚠️ Sector scraping warning: {error_msg}")
+            print(f"   stdout: {stdout}")
+            print(f"   stderr: {stderr}")
+            update_progress("running", "sector_warning", 40, "Sector scraping had issues, trying fallback data...")
         
         # Process sector files
         sector_files = list(outdir.glob("*.constituents.csv"))
@@ -967,12 +1028,29 @@ async def save_to_database():
         }
         
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        error_msg = f"Database save failed: {str(e)}"
+        
+        # Log detailed error information for debugging
+        print(f"❌ CRITICAL ERROR in save_to_database:")
+        print(f"   Error: {str(e)}")
+        print(f"   Type: {type(e).__name__}")
+        print(f"   Traceback: {error_trace}")
+        
         update_progress("error", "failed", 0, f"Error: {str(e)}")
+        
+        # Provide more specific error details for different platforms
+        if sys.platform == "win32":
+            error_msg += " (Windows detected - check subprocess execution and encoding)"
+        
         raise HTTPException(
             status_code=500,
             detail={
                 "error": "Database save failed",
-                "message": str(e)
+                "message": str(e),
+                "platform": sys.platform,
+                "error_type": type(e).__name__
             }
         )
 
