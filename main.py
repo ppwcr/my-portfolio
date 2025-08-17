@@ -817,7 +817,7 @@ async def auto_update_database():
         # Proceed with update
         update_progress("running", "auto-update", 0, "🔄 Starting automatic daily update...")
         
-        return await save_to_database_internal()
+        return await save_to_database()
         
     except Exception as e:
         update_progress("error", "failed", 0, f"❌ Auto-update error: {str(e)}")
@@ -829,8 +829,10 @@ async def auto_update_database():
         }
 
 
-async def save_to_database_internal():
-    """Internal function to save all data to database"""
+
+@app.post("/api/save-to-database")
+async def save_to_database():
+    """Save investor type (SET market) and all sector data to Supabase database"""
     try:
         # Initialize progress
         update_progress("starting", "Initializing", 0, "Starting database save operation...")
@@ -839,7 +841,6 @@ async def save_to_database_internal():
         results = {"investor_data": False, "sector_data": {}, "nvdr_data": False, "short_sales_data": False}
         
         # Initialize trade_date early to avoid reference errors
-        # Extract date from NVDR or Short Sales file first
         trade_date = None
         nvdr_files = list(OUTPUT_DIR.glob("nvdr_*.xlsx"))
         short_sales_files = list(OUTPUT_DIR.glob("short_sales_*.xlsx"))
@@ -857,7 +858,6 @@ async def save_to_database_internal():
         
         if trade_date is None:
             trade_date = date.today()
-        
         
         # Step 1: Get investor data for SET market
         update_progress("running", "investor_scraping", 10, "Scraping investor type data (SET market)...")
@@ -877,11 +877,8 @@ async def save_to_database_internal():
         
         if exit_code == 0 and csv_path.exists():
             update_progress("running", "investor_processing", 25, "Processing investor data...")
-            
-            # Read and save investor data
             investor_df = pd.read_csv(csv_path)
             results["investor_data"] = db.save_investor_summary(investor_df, trade_date)
-            
             update_progress("running", "investor_saved", 30, f"Saved {len(investor_df)} investor records")
         else:
             update_progress("running", "investor_failed", 25, "Failed to scrape investor data")
@@ -893,99 +890,45 @@ async def save_to_database_internal():
         outdir = OUTPUT_DIR / f"sectors_{timestamp}"
         outdir.mkdir(exist_ok=True)
         
-        update_progress("running", "sector_scraping", 40, "Starting sector scraping...")
-        
         cmd = [sys.executable, "scrape_sector_data.py", "--outdir", str(outdir)]
-        update_progress("running", "sector_scraping", 45, "Running sector scraping...")
+        exit_code, stdout, stderr = await run_cmd(cmd, timeout=120)
         
-        # Small delay to ensure frontend receives the message
-        await asyncio.sleep(0.2)
-        
-        exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)  # Increased to 60 seconds for reliability
-        print(f"DEBUG: Sector scraping completed. Exit code: {exit_code}")
-        print(f"DEBUG: stdout: {stdout[:200]}...")
-        print(f"DEBUG: stderr: {stderr[:200]}...")
-        
-        # Always check if we got a complete set (8 sectors), regardless of exit code
+        # Process sector files
         sector_files = list(outdir.glob("*.constituents.csv"))
         total_sectors = len(sector_files)
         
-        # If we don't have all 8 sectors, use the most recent complete set
         if total_sectors < 8:
-            update_progress("running", "sector_fallback", 60, f"Using fallback data ({total_sectors}/8 sectors)")
-            
-            # Find the most recent complete sector directory
+            # Use fallback data
             all_sector_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("sectors_")]
-            complete_dirs = []
-            
-            for sector_dir in all_sector_dirs:
-                if sector_dir.name == outdir.name:  # Skip the current incomplete directory
-                    continue
-                sector_files_in_dir = list(sector_dir.glob("*.constituents.csv"))
-                if len(sector_files_in_dir) >= 8:  # Complete set has all 8 sectors
-                    complete_dirs.append((sector_dir, sector_files_in_dir))
+            complete_dirs = [(d, list(d.glob("*.constituents.csv"))) for d in all_sector_dirs if len(list(d.glob("*.constituents.csv"))) >= 8]
             
             if complete_dirs:
-                # Use the most recent complete directory (simple name sorting - works reliably)
                 complete_dirs.sort(key=lambda x: x[0].name)
                 outdir, sector_files = complete_dirs[-1]
                 total_sectors = len(sector_files)
-                update_progress("running", "sector_processing", 60, f"Processing {total_sectors} sectors")
-            else:
-                update_progress("running", "sector_failed", 60, "No sector data available")
-                sector_files = []
-                total_sectors = 0
-        else:
-            update_progress("running", "sector_processing", 60, f"Processing {total_sectors} sectors")
         
-        # Process sector files (whether from new scraping or fallback)
-        sector_results = {}
-        total_records_saved = 0
+        update_progress("running", "sector_processing", 60, f"Processing {total_sectors} sectors")
         
-        if sector_files:
-            for i, sector_file in enumerate(sector_files):
-                sector_name = sector_file.stem.replace('.constituents', '')
-                progress_pct = 60 + (i / total_sectors) * 30  # 60-90% range
+        for i, sector_file in enumerate(sector_files):
+            sector_name = sector_file.stem.replace('.constituents', '')
+            try:
+                sector_df = pd.read_csv(sector_file)
+                success = db.save_sector_data(sector_df, sector_name, trade_date)
+                results["sector_data"][sector_name] = success
                 
-                update_progress("running", "sector_processing", int(progress_pct), 
-                              f"💾 Processing {sector_name} sector ({i+1}/{total_sectors})...", 
-                              {"current_sector": sector_name, "completed": i, "total": total_sectors, "status": "processing"})
-                
-                # Small delay to ensure frontend receives the progress update
-                await asyncio.sleep(0.1)
-                
-                try:
-                    sector_df = pd.read_csv(sector_file)
-                    success = db.save_sector_data(sector_df, sector_name, trade_date)
-                    results["sector_data"][sector_name] = success
-                    
-                    if success:
-                        update_progress("running", "sector_processing", int(progress_pct), f"Saved {sector_name}")
-                    else:
-                        update_progress("running", "sector_processing", int(progress_pct), f"Failed {sector_name}")
-                        
-                except Exception as e:
-                    results["sector_data"][sector_name] = False
-                    update_progress("running", "sector_processing", int(progress_pct), f"Error {sector_name}")
-            
-            # Sector completion summary
-            successful_sectors = [name for name, result in sector_results.items() if result["success"]]
-            failed_sectors = [name for name, result in sector_results.items() if not result["success"]]
-            
-            update_progress("running", "sector_summary", 89, 
-                          f"🎯 Sector processing complete: {len(successful_sectors)}/{total_sectors} successful", 
-                          {"successful_sectors": successful_sectors, "failed_sectors": failed_sectors, 
-                           "total_records": total_records_saved, "summary": f"{len(successful_sectors)}/{total_sectors} sectors saved"})
-            
-            # Small delay to ensure frontend receives the summary
-            await asyncio.sleep(0.2)
+                progress_pct = 60 + (i / total_sectors) * 30
+                if success:
+                    update_progress("running", "sector_processing", int(progress_pct), f"Saved {sector_name}")
+                else:
+                    update_progress("running", "sector_processing", int(progress_pct), f"Failed {sector_name}")
+            except Exception as e:
+                results["sector_data"][sector_name] = False
+                update_progress("running", "sector_processing", int(progress_pct), f"Error {sector_name}")
         
         # Step 3: Save NVDR data
-        update_progress("running", "nvdr_processing", 90, "Saving NVDR data...")
-        nvdr_files = list(OUTPUT_DIR.glob("nvdr_*.xlsx"))
+        update_progress("running", "nvdr_processing", 93, "Saving NVDR data...")
         if nvdr_files:
-            latest_nvdr = nvdr_files[-1]  # Get most recent file
-            print(f"DEBUG: Processing NVDR file: {latest_nvdr}")
+            latest_nvdr = nvdr_files[-1]
             results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), trade_date)
             if results["nvdr_data"]:
                 update_progress("running", "nvdr_saved", 93, "NVDR data saved")
@@ -996,10 +939,8 @@ async def save_to_database_internal():
         
         # Step 4: Save Short Sales data
         update_progress("running", "shortsales_processing", 95, "Saving Short Sales data...")
-        short_files = list(OUTPUT_DIR.glob("short_sales_*.xlsx"))
-        if short_files:
-            latest_short = short_files[-1]  # Get most recent file
-            print(f"DEBUG: Processing Short Sales file: {latest_short}")
+        if short_sales_files:
+            latest_short = short_sales_files[-1]
             results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), trade_date)
             if results["short_sales_data"]:
                 update_progress("running", "shortsales_saved", 98, "Short Sales data saved")
@@ -1008,67 +949,14 @@ async def save_to_database_internal():
         else:
             update_progress("running", "shortsales_skipped", 98, "No Short Sales files found")
         
-        # Final results with detailed statistics and debugging
+        # Final results
         sector_success = all(results["sector_data"].values()) if results["sector_data"] else False
         total_success = results["investor_data"] and sector_success and results["nvdr_data"] and results["short_sales_data"]
-        
-        # Log only failures for debugging
-        if not total_success:
-            failed_components = []
-            if not results["investor_data"]: failed_components.append("investor")
-            if not sector_success: 
-                failed_sectors = [name for name, success in results["sector_data"].items() if not success]
-                failed_components.append(f"sectors({','.join(failed_sectors)})")
-            if not results["nvdr_data"]: failed_components.append("nvdr")
-            if not results["short_sales_data"]: failed_components.append("short_sales")
-            print(f"DATABASE_UPDATE_FAILED: {','.join(failed_components)}")
-        
-        # Calculate detailed statistics
-        successful_sectors = [name for name, success in results["sector_data"].items() if success] if results["sector_data"] else []
-        failed_sectors = [name for name, success in results["sector_data"].items() if not success] if results["sector_data"] else []
-        
-        # Get record counts (approximate based on typical values)
-        total_records_estimate = total_records_saved  # From sector processing
-        if results["nvdr_data"]:
-            total_records_estimate += 500  # Typical NVDR record count
-        if results["short_sales_data"]:
-            total_records_estimate += 200  # Typical short sales record count
-        if results["investor_data"]:
-            total_records_estimate += 4  # Investor summary records
         
         if total_success:
             update_progress("completed", "success", 100, "Database update complete")
         else:
-            success_count = sum([
-                1 if results["investor_data"] else 0,
-                len([v for v in results["sector_data"].values() if v]) if results["sector_data"] else 0,
-                1 if results["nvdr_data"] else 0,
-                1 if results["short_sales_data"] else 0
-            ])
-            total_count = 1 + len(results["sector_data"]) + 2  # investor + sectors + nvdr + short_sales
-            
-            status_summary = []
-            if results["investor_data"]:
-                status_summary.append("✅ Investor")
-            else:
-                status_summary.append("❌ Investor")
-            
-            if successful_sectors:
-                status_summary.append(f"✅ {len(successful_sectors)} sectors")
-            if failed_sectors:
-                status_summary.append(f"❌ {len(failed_sectors)} sectors")
-                
-            if results["nvdr_data"]:
-                status_summary.append("✅ NVDR")
-            else:
-                status_summary.append("❌ NVDR")
-                
-            if results["short_sales_data"]:
-                status_summary.append("✅ Short Sales")
-            else:
-                status_summary.append("❌ Short Sales")
-            
-            update_progress("completed", "partial", 100, f"Partial success: {success_count}/{total_count} datasets saved")
+            update_progress("completed", "partial", 100, "Partial success")
         
         return {
             "success": total_success,
@@ -1079,26 +967,7 @@ async def save_to_database_internal():
         }
         
     except Exception as e:
-        update_progress("error", "failed", 0, f"❌ Error: {str(e)}")
-        return {
-            "success": False,
-            "updated": False,
-            "message": f"Database save failed: {str(e)}",
-            "details": {"error": str(e)},
-            "trade_date": None
-        }
-
-
-@app.post("/api/save-to-database")
-async def save_to_database():
-    """Public endpoint for manual database save"""
-    try:
-        result = await save_to_database_internal()
-        return JSONResponse(
-            status_code=200 if result["success"] else 207,
-            content=result
-        )
-    except Exception as e:
+        update_progress("error", "failed", 0, f"Error: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail={
@@ -1118,7 +987,7 @@ async def test_update_database():
         # Force update for testing (bypass weekend and daily checks)
         update_progress("running", "test-update", 0, "🧪 Starting test update...")
         
-        return await save_to_database_internal()
+        return await save_to_database()
         
     except Exception as e:
         update_progress("error", "failed", 0, f"❌ Test update error: {str(e)}")
