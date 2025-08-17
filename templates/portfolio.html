@@ -34,6 +34,15 @@
         .negative {
             color: rgb(220 38 38);
         }
+
+        /* Make All Symbols table header sticky under the search bar */
+        .table-sticky thead th {
+            position: sticky;
+            top: var(--sticky-offset, 80px); /* computed from search bar height */
+            background: rgba(255, 255, 255, 0.97);
+            backdrop-filter: blur(2px);
+            z-index: 12;
+        }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 text-slate-900">
@@ -228,7 +237,7 @@
         </section>
 
         <!-- Search Bar (for All Symbols) -->
-        <section class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-2xl border border-blue-200 shadow p-3 mt-2">
+        <section id="all-symbols-search" class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-2xl border border-blue-200 shadow p-3 mt-2">
             <div class="flex items-center gap-3">
                 <div class="relative w-full md:max-w-2xl">
                     <span class="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600">🔎</span>
@@ -250,7 +259,7 @@
                 <h2 class="text-sm font-semibold">All Symbols</h2>
                 <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
             </div>
-            <table class="w-full text-sm">
+            <table class="w-full text-sm table-sticky">
                 <thead>
                     <tr class="border-b bg-white/70">
                         <th class="py-2 px-3 text-left sortable" data-key="symbol">
@@ -1088,6 +1097,19 @@
 
         // Event listeners
         document.addEventListener('DOMContentLoaded', () => {
+            // Compute sticky offset for All Symbols header beneath the search bar
+            function applyStickyOffset() {
+                const search = document.getElementById('all-symbols-search');
+                const table = document.querySelector('table.table-sticky');
+                if (!search || !table) return;
+                const extra = 12; // extra spacing below the search bar
+                const offset = (search.offsetHeight || 64) + extra;
+                table.style.setProperty('--sticky-offset', offset + 'px');
+            }
+            applyStickyOffset();
+            window.addEventListener('resize', applyStickyOffset);
+            // If fonts load later and change heights
+            window.addEventListener('load', applyStickyOffset);
             initDashboard();
 
             // Search functionality
