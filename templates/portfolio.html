@@ -10,8 +10,6 @@
     <script>
         // Debug library loading
         window.addEventListener('load', () => {
-            console.log('Page loaded, checking Chart.js...');
-            console.log('Chart available:', !!window.Chart);
         });
     </script>
     <style>
@@ -798,7 +796,6 @@
                 loadingElement.remove();
             }
             
-            console.log(`🗑️ Chart removed for ${symbol}`);
         }
 
         // Render functions
@@ -1109,7 +1106,6 @@
                 let response;
                 try {
                     const url = `/api/series/symbol/${symbol}`;
-                    console.log(`🔗 Fetching ${symbol}`);
                     response = await fetch(url);
                 } catch (fetchError) {
                     console.warn(`Network error fetching data for ${symbol}:`, fetchError);
@@ -1154,7 +1150,6 @@
                 }
 
                 const data = await response.json();
-                console.log(`📥 Received data for ${symbol}: close=${data.latest?.close}, change=${data.latest?.change}`);
                 
                 if (!data.series || data.series.length === 0) {
                     console.warn(`No chart data for ${symbol}`);
@@ -1196,15 +1191,6 @@
                     }
                 }
 
-                // Debug: Log the data for this symbol
-                console.log(`Chart data for ${symbol}:`, {
-                    firstValue: data.series[0]?.value,
-                    lastValue: data.series[data.series.length - 1]?.value,
-                    change: data.latest.change,
-                    dataPoints: data.series.length,
-                    close: data.latest.close,
-                    date: data.latest.date
-                });
 
                 // Calculate min/max for proper scaling
                 const values = data.series.map(item => item.value);
@@ -1250,7 +1236,6 @@
                 // Hide loading
                 loading.classList.add('hidden');
 
-                console.log(`SVG chart created successfully for ${symbol}`);
 
             } catch (error) {
                 console.error(`Error creating mini chart for ${symbol}:`, error);
@@ -1476,13 +1461,7 @@
                     const waitForLibrary = () => {
                         return new Promise((resolve, reject) => {
                             const checkLibrary = () => {
-                                console.log('Checking Chart.js library...', {
-                                    exists: !!window.Chart,
-                                    retries: retries
-                                });
-                                
                                 if (window.Chart) {
-                                    console.log('Chart.js library loaded successfully');
                                     resolve();
                                 } else if (retries < maxRetries) {
                                     retries++;
@@ -1499,11 +1478,9 @@
 
                     // Render chart with Chart.js
                     const container = document.getElementById('setChart');
-                    console.log('Chart container found:', !!container);
                     
                     if (container) {
                         try {
-                            console.log('Creating Chart.js chart...');
                             
                             // Clear container and create canvas
                             container.innerHTML = '<canvas id="setChartCanvas"></canvas>';
@@ -1619,7 +1596,6 @@
                             // Initialize with default range
                             updateChart(currentRange);
                             
-                            console.log('Chart.js chart created successfully!');
                             
                         } catch (chartError) {
                             console.error('Chart.js creation failed:', chartError);
@@ -1841,7 +1817,6 @@
                                 // Initialize with default range
                                 updateChart(currentRange);
                                 
-                                console.log('Chart.js refresh chart created successfully!');
                                 
                             } catch (chartError) {
                                 console.error('Chart.js refresh failed:', chartError);
