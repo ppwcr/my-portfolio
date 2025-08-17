@@ -608,8 +608,10 @@
         }
 
         // Auto database update function
-        async function autoUpdateDatabase() {
-            showStatus('🔄', 'Starting database update...', 'Updating market data', 'info');
+        async function autoUpdateDatabase(silent = false) {
+            if (!silent) {
+                showStatus('🔄', 'Starting database update...', 'Updating market data', 'info');
+            }
             
             try {
                 const response = await fetch('/api/auto-update-database', { method: 'POST' });
@@ -617,28 +619,34 @@
                 
                 if (result.success) {
                     if (result.updated) {
-                        // Start monitoring progress for the scraping operation
-                        startProgressMonitoring();
-                        
-                        showStatus('🚀', 'Starting data collection...', 'Scraping fresh market data', 'info');
-                        
-                        // Don't auto-hide - let progress monitoring handle status updates
-                        // The final success/error will be shown by updateScrapingStatus
-                        
-                        // Refresh dashboard after a delay to allow scraping to complete
-                        setTimeout(() => initDashboard(), 8000);
+                        if (!silent) {
+                            // Start monitoring progress for the scraping operation
+                            startProgressMonitoring();
+                            showStatus('🚀', 'Starting data collection...', 'Scraping fresh market data', 'info');
+                        } else {
+                            // Silent mode: just show a subtle indicator
+                            console.log('Background database update started...');
+                            // Add a small indicator in the timestamp area
+                            const timestampEl = document.getElementById('status-timestamp');
+                            if (timestampEl) {
+                                timestampEl.textContent = '🔄 Updating...';
+                                timestampEl.style.color = '#3b82f6';
+                            }
+                        }
                     } else {
-                        showStatus('✅', 'Database is up to date', result.message, 'success');
-                        autoHideStatus();
+                        if (!silent) {
+                            showStatus('✅', 'Database is up to date', result.message, 'success');
+                            autoHideStatus();
+                        }
                     }
                 } else {
+                    // Always show warnings/errors even in silent mode
                     showStatus('⚠️', 'Database update completed with warnings', result.message, 'warning');
-                    // Do NOT auto-hide - keep warning visible until next update
                 }
             } catch (error) {
                 console.error('Auto-update error:', error);
+                // Always show errors even in silent mode
                 showStatus('❌', 'Database update failed', `Error: ${error.message}`, 'error');
-                // Do NOT auto-hide - keep error visible until next update
             }
         }
 
@@ -1350,46 +1358,102 @@
         // Initialize the dashboard
         async function initDashboard() {
             try {
-                // Auto-update database first (if needed)
-                await autoUpdateDatabase();
-                
+                // Load existing data immediately from database
                 const [dashboardData, summaryData, portfolioData, setIndexData] = await Promise.all([
                     fetchDashboardData(),
                     fetchSummaryData(),
                     fetchMyPortfolio(),
                     fetchSetIndexData()
                 ]);
-
+                
+                // Display the existing data first
                 if (dashboardData) {
                     originalData = dashboardData.portfolio_stocks || [];
-                    
-                    // Initialize portfolio symbols
-                    if (portfolioData) {
-                        portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
-                        myPortfolioData = portfolioData.portfolio_stocks || [];
-                    }
-                    
-                    // Update trade date
-                    const tradeDateEl = document.getElementById('trade-date');
-                    const lastUpdatedEl = document.getElementById('last-updated');
-                    if (dashboardData.trade_date) {
-                        tradeDateEl.textContent = `Trade Date: ${dashboardData.trade_date}`;
-                        lastUpdatedEl.textContent = new Date().toLocaleString();
-                    }
-
-                    // Render all sections
-                    renderSetIndex(setIndexData);
-                    renderSummaryCards(summaryData);
-                    renderInvestorSummary(dashboardData.investor_summary);
-                    renderMyPortfolio(myPortfolioData);
-                    
-                    // Sort and render portfolio table (default: symbol A-Z)
-                    filterAndSort();
-                    updateSortIndicators();
-                } else {
-                    document.getElementById('empty-state').style.display = 'block';
-                    document.getElementById('loading-state').style.display = 'none';
+                    renderDashboard(dashboardData, summaryData, portfolioData);
                 }
+                
+                if (setIndexData) {
+                    renderSetIndex(setIndexData);
+                }
+                
+                // Now run auto-update in background (silent mode)
+                autoUpdateDatabase(true).then(() => {
+                    // Silently refresh data after background update completes
+                    console.log('Background update completed, refreshing data...');
+                    refreshDataAfterUpdate();
+                    // Clear the updating indicator
+                    const timestampEl = document.getElementById('status-timestamp');
+                    if (timestampEl) {
+                        timestampEl.textContent = new Date().toLocaleTimeString();
+                        timestampEl.style.color = '';
+                    }
+                }).catch(error => {
+                    console.warn('Background update failed:', error);
+                    // Clear the updating indicator
+                    const timestampEl = document.getElementById('status-timestamp');
+                    if (timestampEl) {
+                        timestampEl.textContent = 'Update failed';
+                        timestampEl.style.color = '#ef4444';
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Error initializing dashboard:', error);
+                showStatus('❌', 'Failed to load dashboard', error.message, 'error');
+            }
+        }
+        
+        // Function to refresh data after background update
+        async function refreshDataAfterUpdate() {
+            try {
+                const [dashboardData, summaryData, portfolioData, setIndexData] = await Promise.all([
+                    fetchDashboardData(),
+                    fetchSummaryData(), 
+                    fetchMyPortfolio(),
+                    fetchSetIndexData()
+                ]);
+                
+                if (dashboardData) {
+                    originalData = dashboardData.portfolio_stocks || [];
+                    renderDashboard(dashboardData, summaryData, portfolioData);
+                }
+                
+                if (setIndexData) {
+                    renderSetIndex(setIndexData);
+                }
+                
+            } catch (error) {
+                console.error('Error refreshing data after update:', error);
+            }
+        }
+        
+        // Shared function to render dashboard data
+        function renderDashboard(dashboardData, summaryData, portfolioData) {
+            // Initialize portfolio symbols
+            if (portfolioData) {
+                portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
+                myPortfolioData = portfolioData.portfolio_stocks || [];
+            }
+            
+            // Update trade date
+            const tradeDateEl = document.getElementById('trade-date');
+            const lastUpdatedEl = document.getElementById('last-updated');
+            if (dashboardData.trade_date) {
+                tradeDateEl.textContent = `Trade Date: ${dashboardData.trade_date}`;
+                lastUpdatedEl.textContent = new Date().toLocaleString();
+            }
+
+            // Render all sections
+            renderSummaryCards(summaryData);
+            renderInvestorSummary(dashboardData.investor_summary);
+            renderMyPortfolio(myPortfolioData);
+            
+            // Sort and render portfolio table (default: symbol A-Z)
+            filterAndSort();
+            updateSortIndicators();
+        }
+
+                // This is handled in the initDashboard function above
             } catch (error) {
                 console.error('Error initializing dashboard:', error);
                 document.getElementById('empty-state').style.display = 'block';
