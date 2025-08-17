@@ -941,8 +941,8 @@ async def save_to_database_internal():
                     complete_dirs.append((sector_dir, sector_files_in_dir))
             
             if complete_dirs:
-                # Use the most recent complete directory
-                complete_dirs.sort(key=lambda x: x[0].name)
+                # Use the most recent complete directory (by modification time, not name)
+                complete_dirs.sort(key=lambda x: x[0].stat().st_mtime)
                 outdir, sector_files = complete_dirs[-1]
                 total_sectors = len(sector_files)
                 update_progress("running", "sector_processing", 60, f"✅ Using complete sector data from {outdir.name} ({total_sectors} sectors)...")
@@ -1419,8 +1419,8 @@ async def get_portfolio_dashboard():
             stocks_data = {}
             if stocks_result.data:
                 for item in stocks_result.data:
-                    # Only include stocks with valid last_price
-                    if item.get('last_price') and item['last_price'] != 0:
+                    # Only include stocks with valid last_price (allow legitimate low prices like 0.04)
+                    if item.get('last_price') is not None and item['last_price'] >= 0:
                         # Clean change and percent_change values
                         cleaned_item = {
                             'symbol': item['symbol'],
@@ -1718,7 +1718,8 @@ async def get_my_portfolio():
                 sector = stock_info.get('sector', '')
                 
                 # If no valid data from sector_data, mark for API update
-                if close_price == 0 or not sector:
+                # Note: Only treat as invalid if price is None/missing AND no sector data
+                if (close_price is None or close_price < 0) or not sector:
                     print(f"⚠️ {symbol} has no valid data in sector_data (close={close_price}, sector={sector})")
                     # We'll handle this in the frontend by showing a note to refresh
                 
