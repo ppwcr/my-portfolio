@@ -130,17 +130,47 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
     """
     print(f"Running command: {' '.join(cmd)}")
     
-    # Windows-specific process creation parameters
+    # Windows-specific fixes
+    if sys.platform == "win32":
+        # On Windows, ensure the script paths exist and are accessible
+        if len(cmd) >= 2 and cmd[1].endswith('.py'):
+            script_path = Path(cmd[1])
+            if not script_path.exists():
+                return (
+                    1,
+                    "",
+                    f"Script not found: {script_path.absolute()}"
+                )
+        
+        # Try using subprocess.run first for better Windows compatibility
+        try:
+            import subprocess
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                cwd=Path.cwd()
+            )
+            return (result.returncode, result.stdout, result.stderr)
+        except subprocess.TimeoutExpired:
+            return (124, "", f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
+        except Exception as sync_error:
+            print(f"Windows subprocess.run failed: {sync_error}, trying asyncio...")
+    
+    # Fallback to asyncio method (for non-Windows or if subprocess.run fails)
     kwargs = {}
     if sys.platform == "win32":
-        # On Windows, use creation flags to handle subprocess properly
-        kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+        import subprocess
+        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
     
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=Path.cwd(),
             **kwargs
         )
         
@@ -152,12 +182,11 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
         # Use proper encoding detection for Windows
         encoding = 'utf-8'
         if sys.platform == "win32":
-            # Try to detect Windows encoding
             import locale
             try:
                 encoding = locale.getpreferredencoding() or 'utf-8'
             except:
-                encoding = 'cp1252'  # Common Windows encoding fallback
+                encoding = 'cp1252'
         
         return (
             proc.returncode,
@@ -166,10 +195,9 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
         )
         
     except asyncio.TimeoutError:
-        # Kill the process if it's still running
         if 'proc' in locals() and proc and proc.returncode is None:
             if sys.platform == "win32":
-                proc.kill()  # On Windows, use kill() directly
+                proc.kill()
             else:
                 proc.terminate()
             try:
@@ -178,19 +206,9 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
                 proc.kill()
                 await proc.wait()
         
-        # Don't raise HTTPException immediately, return timeout info
-        return (
-            124,  # Standard timeout exit code
-            "",
-            f"Command timed out after {timeout} seconds: {' '.join(cmd)}"
-        )
+        return (124, "", f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
     except Exception as e:
-        # Catch other subprocess errors, particularly on Windows
-        return (
-            1,  # Generic error exit code
-            "",
-            f"Subprocess error: {str(e)}"
-        )
+        return (1, "", f"Subprocess error: {str(e)}")
 
 
 @app.get("/")
@@ -1100,7 +1118,13 @@ async def debug_components():
     debug_results = {
         "platform": sys.platform,
         "python_path": sys.executable,
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "working_dir": str(Path.cwd()),
+        "scripts_exist": {
+            "scrape_investor_data.py": Path("scrape_investor_data.py").exists(),
+            "download_nvdr_excel.py": Path("download_nvdr_excel.py").exists(),
+            "download_short_sales_excel.py": Path("download_short_sales_excel.py").exists()
+        },
         "components": {}
     }
     
