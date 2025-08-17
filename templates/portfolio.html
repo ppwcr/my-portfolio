@@ -264,72 +264,75 @@
             </div>
         </section>
 
-        <!-- Search Bar (for All Symbols) -->
-        <section id="all-symbols-search" class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-2xl border border-blue-200 shadow p-3 mt-2">
-            <div class="flex items-center justify-between gap-3 mb-2">
-                <h2 class="text-sm font-semibold">All Symbols</h2>
-                <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
-            </div>
-            <div class="flex items-center gap-3">
-                <div class="relative w-full md:max-w-2xl">
-                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600">🔎</span>
-                    <input
-                        id="search-input"
-                        placeholder="Search all symbols (e.g., AOT)"
-                        class="w-full pl-10 pr-10 py-3 rounded-xl border border-blue-300 bg-white shadow-inner text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button id="search-clear" title="Clear"
-                            class="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded hover:bg-slate-100 text-slate-500 hidden">✕</button>
+        <!-- Search Bar (for All Symbols) with Column Headers -->
+        <section id="all-symbols-search" class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-t-2xl border border-blue-200 shadow mt-2">
+            <div class="p-3 border-b border-blue-200">
+                <div class="flex items-center justify-between gap-3 mb-2">
+                    <h2 class="text-sm font-semibold">All Symbols</h2>
+                    <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
                 </div>
-                <span id="search-count" class="text-xs md:text-sm text-slate-600 whitespace-nowrap"></span>
+                <div class="flex items-center gap-3">
+                    <div class="relative w-full md:max-w-2xl">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600">🔎</span>
+                        <input
+                            id="search-input"
+                            placeholder="Search all symbols (e.g., AOT)"
+                            class="w-full pl-10 pr-10 py-3 rounded-xl border border-blue-300 bg-white shadow-inner text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button id="search-clear" title="Clear"
+                                class="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded hover:bg-slate-100 text-slate-500 hidden">✕</button>
+                    </div>
+                    <span id="search-count" class="text-xs md:text-sm text-slate-600 whitespace-nowrap"></span>
+                </div>
+            </div>
+            <!-- Column Headers integrated into search bar -->
+            <div class="px-3 py-2 bg-white/70 border-b border-slate-200">
+                <div class="flex items-center text-sm font-medium text-slate-700">
+                    <div class="py-1 px-0 flex-1 text-left sortable cursor-pointer" data-key="symbol">
+                        <span class="inline-flex items-center gap-1">
+                            Symbol
+                            <span class="text-xs opacity-30" id="sort-symbol">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-20 text-left">Sector</div>
+                    <div class="py-1 px-3 w-20 text-right sortable cursor-pointer" data-key="close">
+                        <span class="inline-flex items-center gap-1">
+                            ราคาปิด
+                            <span class="text-xs opacity-30" id="sort-close">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-20 text-right sortable cursor-pointer" data-key="change">
+                        <span class="inline-flex items-center gap-1">
+                            Change
+                            <span class="text-xs opacity-30" id="sort-change">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-24 text-right sortable cursor-pointer" data-key="pct_change">
+                        <span class="inline-flex items-center gap-1">
+                            % Change
+                            <span class="text-xs opacity-30" id="sort-pct_change">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-28 text-right sortable cursor-pointer" data-key="nvdr_baht">
+                        <span class="inline-flex items-center gap-1">
+                            NVDR (Baht)
+                            <span class="text-xs opacity-30" id="sort-nvdr_baht">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-32 text-right sortable cursor-pointer" data-key="shortBaht">
+                        <span class="inline-flex items-center gap-1">
+                            Short Sales (Baht)
+                            <span class="text-xs opacity-30" id="sort-shortBaht">↕</span>
+                        </span>
+                    </div>
+                    <div class="py-1 px-3 w-20 text-center">Portfolio</div>
+                </div>
             </div>
         </section>
 
         <!-- Main Portfolio Table -->
-        <div class="table-container overflow-x-auto rounded-2xl shadow bg-white/80">
-            <table class="w-full text-sm table-sticky">
-                <thead>
-                    <tr class="border-b bg-white/70">
-                        <th class="py-2 px-3 text-left sortable" data-key="symbol">
-                            <span class="inline-flex items-center gap-1">
-                                Symbol
-                                <span class="text-xs opacity-30" id="sort-symbol">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-left">Sector</th>
-                        <th class="py-2 px-3 text-right sortable" data-key="close">
-                            <span class="inline-flex items-center gap-1">
-                                ราคาปิด
-                                <span class="text-xs opacity-30" id="sort-close">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-right sortable" data-key="change">
-                            <span class="inline-flex items-center gap-1">
-                                Change
-                                <span class="text-xs opacity-30" id="sort-change">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-right sortable" data-key="percent_change">
-                            <span class="inline-flex items-center gap-1">
-                                % Change
-                                <span class="text-xs opacity-30" id="sort-percent_change">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-right sortable" data-key="nvdr">
-                            <span class="inline-flex items-center gap-1">
-                                NVDR (Baht)
-                                <span class="text-xs opacity-30" id="sort-nvdr">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-right sortable" data-key="shortBaht">
-                            <span class="inline-flex items-center gap-1">
-                                Short Sales (Baht)
-                                <span class="text-xs opacity-30" id="sort-shortBaht">↕</span>
-                            </span>
-                        </th>
-                        <th class="py-2 px-3 text-center">Portfolio</th>
-                    </tr>
-                </thead>
+        <div class="table-container overflow-x-auto rounded-b-2xl shadow bg-white/80">
+            <table class="w-full text-sm">
                 <tbody id="portfolio-tbody">
                     <!-- Portfolio data will be populated here -->
                 </tbody>

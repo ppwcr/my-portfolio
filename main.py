@@ -40,6 +40,7 @@ except Exception:
 
 # Simple cache for symbol data to avoid repeated yfinance calls
 symbol_cache = {}
+CACHE_EXPIRY_HOURS = 8  # Cache expires after 8 hours
 
 # Simple lock for serializing yfinance requests to prevent concurrent access issues
 import threading
@@ -260,9 +261,22 @@ def get_symbol_series(symbol: str):
     """
     # Check cache first
     if symbol in symbol_cache:
-        cached_data = symbol_cache[symbol]
-        print(f"📋 Using cached data for {symbol}")
-        return JSONResponse(content=cached_data)
+        cached_entry = symbol_cache[symbol]
+        cached_data = cached_entry['data']
+        cached_time = cached_entry['timestamp']
+        
+        # Check if cache is still valid (8 hours)
+        from datetime import datetime, timedelta
+        current_time = datetime.now()
+        cache_age = current_time - cached_time
+        
+        if cache_age < timedelta(hours=CACHE_EXPIRY_HOURS):
+            print(f"📋 Using cached data for {symbol} (age: {cache_age.total_seconds()/3600:.1f}h)")
+            return JSONResponse(content=cached_data)
+        else:
+            print(f"⏰ Cache expired for {symbol} (age: {cache_age.total_seconds()/3600:.1f}h), fetching fresh data")
+            # Remove expired cache entry
+            del symbol_cache[symbol]
     
     max_retries = 3
     for attempt in range(max_retries):
@@ -393,9 +407,13 @@ def get_symbol_series(symbol: str):
 
             print(f"✅ Successfully fetched data for {symbol} on attempt {attempt + 1}")
             
-            # Cache the successful result
+            # Cache the successful result with timestamp
+            from datetime import datetime
             result_data = {"series": series, "latest": latest}
-            symbol_cache[symbol] = result_data
+            symbol_cache[symbol] = {
+                'data': result_data,
+                'timestamp': datetime.now()
+            }
             
             return JSONResponse(content=result_data)
             
@@ -415,13 +433,57 @@ def clear_symbol_cache():
     return JSONResponse(content={"message": "Symbol cache cleared successfully"})
 
 
+@app.post("/api/series/symbol/cache/expire")
+def expire_symbol_cache():
+    """Expire all cache entries (for testing)"""
+    global symbol_cache
+    from datetime import datetime, timedelta
+    
+    # Set all timestamps to be expired
+    current_time = datetime.now()
+    expired_time = current_time - timedelta(hours=CACHE_EXPIRY_HOURS + 1)
+    
+    for symbol in symbol_cache:
+        symbol_cache[symbol]['timestamp'] = expired_time
+    
+    print("⏰ All cache entries expired")
+    return JSONResponse(content={"message": "All cache entries expired successfully"})
+
+
 @app.get("/api/series/symbol/cache/status")
 def get_cache_status():
     """Get the current cache status"""
     global symbol_cache
+    from datetime import datetime, timedelta
+    
+    # Clean up expired cache entries
+    current_time = datetime.now()
+    expired_symbols = []
+    
+    for symbol, entry in symbol_cache.items():
+        cache_age = current_time - entry['timestamp']
+        if cache_age >= timedelta(hours=CACHE_EXPIRY_HOURS):
+            expired_symbols.append(symbol)
+    
+    # Remove expired entries
+    for symbol in expired_symbols:
+        del symbol_cache[symbol]
+        print(f"🧹 Removed expired cache for {symbol}")
+    
+    cache_info = {}
+    for symbol, entry in symbol_cache.items():
+        cache_age = current_time - entry['timestamp']
+        cache_info[symbol] = {
+            'age_hours': round(cache_age.total_seconds() / 3600, 1),
+            'expires_in_hours': round((CACHE_EXPIRY_HOURS * 3600 - cache_age.total_seconds()) / 3600, 1)
+        }
+    
     return JSONResponse(content={
         "cached_symbols": list(symbol_cache.keys()),
-        "cache_size": len(symbol_cache)
+        "cache_size": len(symbol_cache),
+        "cache_expiry_hours": CACHE_EXPIRY_HOURS,
+        "cache_details": cache_info,
+        "expired_removed": len(expired_symbols)
     })
 
 
