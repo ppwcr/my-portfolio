@@ -930,42 +930,25 @@ async def save_to_database_internal():
             print(f"DEBUG: Current scraping only got {total_sectors}/8 sectors, looking for complete fallback data")
             
             # Find the most recent complete sector directory
-            try:
-                all_sector_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("sectors_")]
-                complete_dirs = []
-                
-                for sector_dir in all_sector_dirs:
-                    try:
-                        if sector_dir.name == outdir.name:  # Skip the current incomplete directory
-                            continue
-                        sector_files_in_dir = list(sector_dir.glob("*.constituents.csv"))
-                        if len(sector_files_in_dir) >= 8:  # Complete set has all 8 sectors
-                            complete_dirs.append((sector_dir, sector_files_in_dir))
-                    except (OSError, PermissionError) as dir_e:
-                        print(f"⚠️ Warning: Could not access directory {sector_dir}: {dir_e}")
-                        continue
-                
-                if complete_dirs:
-                    # Use the most recent complete directory (by modification time, not name)
-                    try:
-                        complete_dirs.sort(key=lambda x: x[0].stat().st_mtime)
-                        print(f"DEBUG: Sorted {len(complete_dirs)} complete directories by modification time")
-                    except (OSError, PermissionError, AttributeError) as sort_e:
-                        print(f"⚠️ Warning: Could not sort by modification time ({sort_e}), falling back to name sorting")
-                        complete_dirs.sort(key=lambda x: x[0].name)
-                    
-                    outdir, sector_files = complete_dirs[-1]
-                    total_sectors = len(sector_files)
-                    update_progress("running", "sector_processing", 60, f"Using complete sector data from {outdir.name} ({total_sectors} sectors)...")
-                    print(f"DEBUG: Using fallback sector data from {outdir} with {total_sectors} sectors")
-                else:
-                    update_progress("running", "sector_failed", 60, "No complete sector data available")
-                    sector_files = []
-                    total_sectors = 0
-                    
-            except Exception as fallback_e:
-                print(f"ERROR: Failed to find fallback sector data: {fallback_e}")
-                update_progress("running", "sector_failed", 60, f"Error accessing sector data: {str(fallback_e)[:50]}")
+            all_sector_dirs = [d for d in OUTPUT_DIR.iterdir() if d.is_dir() and d.name.startswith("sectors_")]
+            complete_dirs = []
+            
+            for sector_dir in all_sector_dirs:
+                if sector_dir.name == outdir.name:  # Skip the current incomplete directory
+                    continue
+                sector_files_in_dir = list(sector_dir.glob("*.constituents.csv"))
+                if len(sector_files_in_dir) >= 8:  # Complete set has all 8 sectors
+                    complete_dirs.append((sector_dir, sector_files_in_dir))
+            
+            if complete_dirs:
+                # Use the most recent complete directory (simple name sorting - works reliably)
+                complete_dirs.sort(key=lambda x: x[0].name)
+                outdir, sector_files = complete_dirs[-1]
+                total_sectors = len(sector_files)
+                update_progress("running", "sector_processing", 60, f"✅ Using complete sector data from {outdir.name} ({total_sectors} sectors)...")
+                print(f"DEBUG: Using fallback sector data from {outdir} with {total_sectors} sectors")
+            else:
+                update_progress("running", "sector_failed", 60, "⚠️ No complete sector data available")
                 sector_files = []
                 total_sectors = 0
         else:
