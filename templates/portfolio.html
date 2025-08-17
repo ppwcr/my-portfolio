@@ -611,13 +611,15 @@
         }
 
         // Auto database update function
-        async function autoUpdateDatabase(silent = false) {
+        async function autoUpdateDatabase(silent = false, forceRefresh = false) {
             if (!silent) {
                 showStatus('🔄', 'Starting database update...', 'Updating market data', 'info');
             }
             
             try {
-                const response = await fetch('/api/auto-update-database', { method: 'POST' });
+                // Use full refresh endpoint if forceRefresh is true (for initial page load with no data)
+                const endpoint = forceRefresh ? '/api/save-to-database-full' : '/api/auto-update-database';
+                const response = await fetch(endpoint, { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
@@ -1370,20 +1372,43 @@
                 ]);
                 
                 // Display the existing data first
-                if (dashboardData) {
+                let hasData = false;
+                if (dashboardData && dashboardData.portfolio_stocks && dashboardData.portfolio_stocks.length > 0) {
                     originalData = dashboardData.portfolio_stocks || [];
                     renderDashboard(dashboardData, summaryData, portfolioData);
+                    hasData = true;
                 }
                 
-                if (setIndexData) {
+                if (setIndexData && setIndexData.series && setIndexData.series.length > 0) {
                     renderSetIndex(setIndexData);
+                    hasData = true;
                 }
                 
-                // Now run auto-update in background (silent mode)
-                autoUpdateDatabase(true).then(() => {
+                // If no data exists, show empty state and force a full refresh
+                const needsFullRefresh = !hasData;
+                if (needsFullRefresh) {
+                    // Show empty state with loading message
+                    document.getElementById('loading-state').style.display = 'block';
+                    document.getElementById('loading-state').innerHTML = `
+                        <div class="text-center py-8">
+                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                            <h3 class="text-lg font-medium text-gray-900 mb-2">Setting up your portfolio...</h3>
+                            <p class="text-gray-600">Downloading market data for the first time</p>
+                            <p class="text-sm text-gray-500 mt-2">This may take 1-2 minutes</p>
+                        </div>
+                    `;
+                    showStatus('📥', 'First time setup - downloading market data...', 'This may take 1-2 minutes', 'info');
+                } else {
+                    // Hide loading state if we have data
+                    document.getElementById('loading-state').style.display = 'none';
+                }
+                
+                autoUpdateDatabase(true, needsFullRefresh).then(() => {
                     // Silently refresh data after background update completes
                     console.log('Background update completed, refreshing data...');
                     refreshDataAfterUpdate();
+                    // Hide loading state
+                    document.getElementById('loading-state').style.display = 'none';
                     // Clear the updating indicator
                     const timestampEl = document.getElementById('status-timestamp');
                     if (timestampEl) {
@@ -1392,6 +1417,17 @@
                     }
                 }).catch(error => {
                     console.warn('Background update failed:', error);
+                    // Show error state
+                    document.getElementById('loading-state').innerHTML = `
+                        <div class="text-center py-8">
+                            <div class="text-red-500 text-4xl mb-4">❌</div>
+                            <h3 class="text-lg font-medium text-gray-900 mb-2">Setup failed</h3>
+                            <p class="text-gray-600">Failed to download market data</p>
+                            <button onclick="location.reload()" class="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                                Try Again
+                            </button>
+                        </div>
+                    `;
                     // Clear the updating indicator
                     const timestampEl = document.getElementById('status-timestamp');
                     if (timestampEl) {
