@@ -800,54 +800,10 @@ async def export_sector_constituents(slug: str = Query(..., pattern="^(agro|cons
 
 @app.post("/api/auto-update-database")
 async def auto_update_database():
-    """Auto-update database with daily limits and weekend skip"""
+    """Auto-update database - always runs when called (weekend detection disabled)"""
     try:
-        # Check if today is weekend
-        today = datetime.now()
-        if today.weekday() >= 5:  # Saturday = 5, Sunday = 6
-            return {
-                "success": True,
-                "updated": False,
-                "message": "Weekend - Market is closed, no update needed",
-                "details": {"reason": "weekend", "day": today.strftime("%A")}
-            }
-        
-        db = get_proper_db()
-        today_date = today.date()
-        
-        # Check if we already updated today by looking at any table's latest data
-        update_needed = False
-        update_reasons = []
-        
-        # Check each data source
-        checks = {
-            "investor_summary": "No fresh investor data for today",
-            "nvdr_trading": "No fresh NVDR data for today", 
-            "short_sales_trading": "No fresh short sales data for today",
-            "sector_data": "No fresh sector data for today"
-        }
-        
-        for table_name, reason in checks.items():
-            try:
-                result = db.client.table(table_name).select('trade_date').eq('trade_date', today_date.isoformat()).limit(1).execute()
-                if not result.data:
-                    update_needed = True
-                    update_reasons.append(reason)
-            except Exception as e:
-                # If table doesn't exist or has issues, we need to update
-                update_needed = True
-                update_reasons.append(f"{table_name}: {str(e)}")
-        
-        if not update_needed:
-            return {
-                "success": True,
-                "updated": False,
-                "message": "Database is already up to date for today",
-                "details": {"date": today_date.isoformat(), "all_tables": "current"}
-            }
-        
-        # Proceed with update
-        update_progress("running", "auto-update", 0, "🔄 Starting automatic daily update...")
+        # Proceed with update immediately (no weekend or daily checks)
+        update_progress("running", "auto-update", 0, "🔄 Starting database update...")
         
         return await save_to_database()
         

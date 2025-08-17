@@ -601,13 +601,7 @@
 
         // Auto database update function
         async function autoUpdateDatabase() {
-            if (isWeekend()) {
-                showStatus('📅', 'Weekend - No market data update', 'Market is closed on weekends', 'info');
-                autoHideStatus();
-                return;
-            }
-
-            showStatus('🔄', 'Checking for fresh market data...', 'Validating daily update status', 'info');
+            showStatus('🔄', 'Starting database update...', 'Updating market data', 'info');
             
             try {
                 const response = await fetch('/api/auto-update-database', { method: 'POST' });
