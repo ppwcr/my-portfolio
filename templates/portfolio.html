@@ -38,19 +38,14 @@
                 <p id="trade-date" class="text-xs opacity-50 mt-1">Loading trade date...</p>
             </div>
             <div class="flex gap-2 items-center">
-                <input
-                    id="search-input"
-                    placeholder="Search symbol…"
-                    class="px-3 py-2 rounded-xl border bg-white shadow-inner text-sm"
-                />
                 <button id="refresh-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
                     Refresh Data
                 </button>
                 <button id="save-db-btn" class="px-3 py-2 rounded-xl shadow bg-green-600 text-white text-sm">
                     Update Database
                 </button>
-                <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
-                    Export CSV
+                <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm" title="Export My Portfolio table to CSV">
+                    Export My Portfolio CSV
                 </button>
             </div>
         </header>
@@ -151,8 +146,29 @@
             </div>
         </section>
 
+        <!-- Search Bar (for All Symbols) -->
+        <section class="sticky top-2 z-10 bg-white/90 backdrop-blur rounded-2xl border border-blue-200 shadow p-3 mt-2">
+            <div class="flex items-center gap-3">
+                <div class="relative w-full md:max-w-2xl">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600">🔎</span>
+                    <input
+                        id="search-input"
+                        placeholder="Search all symbols (e.g., AOT)"
+                        class="w-full pl-10 pr-10 py-3 rounded-xl border border-blue-300 bg-white shadow-inner text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <button id="search-clear" title="Clear"
+                            class="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded hover:bg-slate-100 text-slate-500 hidden">✕</button>
+                </div>
+                <span id="search-count" class="text-xs md:text-sm text-slate-600 whitespace-nowrap"></span>
+            </div>
+        </section>
+
         <!-- Main Portfolio Table -->
         <div class="overflow-x-auto rounded-2xl shadow bg-white/80">
+            <div class="p-3 border-b flex items-center justify-between bg-white/80 rounded-t-2xl">
+                <h2 class="text-sm font-semibold">All Symbols</h2>
+                <div id="all-symbols-header" class="text-xs text-slate-600">Loading…</div>
+            </div>
             <table class="w-full text-sm">
                 <thead>
                     <tr class="border-b bg-white/70">
@@ -511,6 +527,24 @@
 
             portfolioData = filtered;
             renderPortfolioTable(portfolioData);
+
+            // Update search result count
+            const countEl = document.getElementById('search-count');
+            if (countEl) {
+                const total = originalData.length || 0;
+                countEl.textContent = `${portfolioData.length} / ${total} symbols`;
+            }
+
+            // Update All Symbols header meta
+            const headerEl = document.getElementById('all-symbols-header');
+            if (headerEl) {
+                const total = originalData.length || 0;
+                if (searchQuery && searchQuery.trim().length > 0) {
+                    headerEl.textContent = `Showing ${portfolioData.length} of ${total} symbols for "${searchQuery.toUpperCase()}"`;
+                } else {
+                    headerEl.textContent = `Showing ${portfolioData.length} of ${total} symbols`;
+                }
+            }
         }
 
         function updateSortIndicators() {
@@ -541,8 +575,14 @@
         function exportCSV() {
             const headers = ['Symbol', 'Sector', 'ราคาปิด (Baht)', 'Change', '% Change', 'NVDR (Baht)', 'Short Sales (Baht)'];
             const lines = [headers.map(csvEscape).join(',')];
-            
-            portfolioData.forEach(stock => {
+
+            const source = Array.isArray(myPortfolioData) ? myPortfolioData : [];
+            if (source.length === 0) {
+                alert('Your portfolio is empty. Add symbols to export.');
+                return;
+            }
+
+            source.forEach(stock => {
                 lines.push([
                     csvEscape(stock.symbol || ''),
                     csvEscape(stock.sector || ''),
@@ -558,7 +598,7 @@
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `portfolio-nvdr-short-${new Date().toISOString().split('T')[0]}.csv`;
+            a.download = `my-portfolio-${new Date().toISOString().split('T')[0]}.csv`;
             a.click();
             URL.revokeObjectURL(url);
         }
@@ -702,10 +742,25 @@
             initDashboard();
 
             // Search functionality
-            document.getElementById('search-input').addEventListener('input', (e) => {
+            const searchInput = document.getElementById('search-input');
+            const clearBtn = document.getElementById('search-clear');
+            searchInput.addEventListener('input', (e) => {
                 searchQuery = e.target.value;
+                if (clearBtn) {
+                    if (searchQuery && searchQuery.length > 0) clearBtn.classList.remove('hidden');
+                    else clearBtn.classList.add('hidden');
+                }
                 filterAndSort();
             });
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => {
+                    searchInput.value = '';
+                    searchQuery = '';
+                    clearBtn.classList.add('hidden');
+                    filterAndSort();
+                    searchInput.focus();
+                });
+            }
 
             // Sort functionality
             document.querySelectorAll('.sortable').forEach(el => {
