@@ -106,6 +106,9 @@
                     <button id="update-database-btn" class="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors">
                         Update Database
                     </button>
+                    <button id="debug-components-btn" class="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600 transition-colors">
+                        Debug Components
+                    </button>
                     <div id="status-timestamp" class="text-xs opacity-60"></div>
                 </div>
             </div>
@@ -1836,6 +1839,44 @@
                 } finally {
                     btn.disabled = false;
                     btn.textContent = 'Refresh';
+                }
+            });
+
+            // Debug Components button functionality
+            document.getElementById('debug-components-btn').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                const originalText = btn.textContent;
+                
+                btn.disabled = true;
+                btn.textContent = 'Testing...';
+                
+                showStatus('🔍', 'Testing individual components...', 'Checking what is failing on Windows', 'info');
+                
+                try {
+                    const response = await fetch('/api/debug-components', { method: 'POST' });
+                    const result = await response.json();
+                    
+                    console.log('Debug Results:', result);
+                    
+                    // Show summary in status
+                    const failures = [];
+                    if (result.components?.investor_data?.exit_code !== 0) failures.push('investor');
+                    if (result.components?.nvdr_data?.exit_code !== 0) failures.push('NVDR');
+                    if (result.components?.short_sales_data?.exit_code !== 0) failures.push('short sales');
+                    if (result.components?.database?.connection !== 'success') failures.push('database');
+                    
+                    if (failures.length === 0) {
+                        showStatus('✅', 'All components working', 'Check console for detailed results', 'success');
+                    } else {
+                        showStatus('❌', `Components failing: ${failures.join(', ')}`, 'Check console for detailed error messages', 'error');
+                    }
+                    
+                } catch (error) {
+                    console.error('Debug test failed:', error);
+                    showStatus('❌', 'Debug test failed', error.message || 'Check console for details', 'error');
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
                 }
             });
         });

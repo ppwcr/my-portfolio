@@ -1094,6 +1094,130 @@ async def test_update_database():
         }
 
 
+@app.post("/api/debug-components")
+async def debug_components():
+    """Debug endpoint to test individual components on Windows"""
+    debug_results = {
+        "platform": sys.platform,
+        "python_path": sys.executable,
+        "working_dir": str(Path.cwd()),
+        "components": {}
+    }
+    
+    try:
+        # Test 1: Investor data scraping
+        print("🔍 Testing investor data scraping...")
+        csv_path = OUTPUT_DIR / "debug_investor_table.csv"
+        json_path = OUTPUT_DIR / "debug_investor_chart.json"
+        
+        cmd = [
+            sys.executable, "scrape_investor_data.py",
+            "--market", "SET",
+            "--out-table", str(csv_path),
+            "--out-json", str(json_path),
+            "--allow-missing-chart"
+        ]
+        
+        exit_code, stdout, stderr = await run_cmd(cmd, timeout=30)
+        debug_results["components"]["investor_data"] = {
+            "exit_code": exit_code,
+            "file_exists": csv_path.exists(),
+            "stdout": stdout[:500] if stdout else "",
+            "stderr": stderr[:500] if stderr else "",
+            "command": " ".join(cmd)
+        }
+        
+        # Test 2: NVDR download
+        print("🔍 Testing NVDR download...")
+        nvdr_path = OUTPUT_DIR / "debug_nvdr.xlsx"
+        nvdr_cmd = [sys.executable, "download_nvdr_excel.py", "--out", str(nvdr_path)]
+        if sys.platform == "win32":
+            nvdr_cmd.append("--no-sandbox")
+            
+        exit_code, stdout, stderr = await run_cmd(nvdr_cmd, timeout=30)
+        debug_results["components"]["nvdr_data"] = {
+            "exit_code": exit_code,
+            "file_exists": nvdr_path.exists(),
+            "stdout": stdout[:500] if stdout else "",
+            "stderr": stderr[:500] if stderr else "",
+            "command": " ".join(nvdr_cmd)
+        }
+        
+        # Test 3: Short sales download
+        print("🔍 Testing short sales download...")
+        short_path = OUTPUT_DIR / "debug_short.xlsx"
+        short_cmd = [sys.executable, "download_short_sales_excel.py", "--out", str(short_path)]
+        if sys.platform == "win32":
+            short_cmd.append("--no-sandbox")
+            
+        exit_code, stdout, stderr = await run_cmd(short_cmd, timeout=30)
+        debug_results["components"]["short_sales_data"] = {
+            "exit_code": exit_code,
+            "file_exists": short_path.exists(),
+            "stdout": stdout[:500] if stdout else "",
+            "stderr": stderr[:500] if stderr else "",
+            "command": " ".join(short_cmd)
+        }
+        
+        # Test 4: Database connection
+        print("🔍 Testing database connection...")
+        try:
+            db = get_proper_db()
+            test_result = db.client.table('investor_summary').select('trade_date').limit(1).execute()
+            debug_results["components"]["database"] = {
+                "connection": "success",
+                "table_accessible": True,
+                "error": None
+            }
+        except Exception as db_error:
+            debug_results["components"]["database"] = {
+                "connection": "failed",
+                "table_accessible": False,
+                "error": str(db_error)[:200]
+            }
+        
+        return debug_results
+        
+    except Exception as e:
+        debug_results["error"] = str(e)
+        return debug_results
+
+
+@app.post("/api/install-playwright-browsers")
+async def install_playwright_browsers():
+    """Install Playwright browsers (Windows fix)"""
+    if sys.platform != "win32":
+        return {"success": False, "message": "This endpoint is only for Windows"}
+    
+    try:
+        print("🔧 Installing Playwright browsers for Windows...")
+        
+        # Try to install Playwright browsers
+        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+        exit_code, stdout, stderr = await run_cmd(cmd, timeout=300)  # 5 minute timeout
+        
+        if exit_code == 0:
+            return {
+                "success": True,
+                "message": "Playwright browsers installed successfully",
+                "stdout": stdout,
+                "stderr": stderr
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"Failed to install browsers (exit_code: {exit_code})",
+                "stdout": stdout,
+                "stderr": stderr
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Error installing browsers: {str(e)}"
+        }
+
+
 @app.get("/api/set-index")
 async def get_set_index():
     """Get SET index data with daily caching (database + file fallback)"""
