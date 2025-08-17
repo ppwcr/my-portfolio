@@ -1,5 +1,5 @@
 # Environment variables and secrets
-.env
+# .env  # Removed for internal use in private repo
 .env.local
 .env.local.backup
 .env.production

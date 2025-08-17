@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
@@ -149,10 +149,10 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
         )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    """Serve the main page with floating panel UI"""
-    return templates.TemplateResponse("index.html", {"request": request})
+@app.get("/")
+async def index():
+    """Redirect root to the portfolio dashboard (panel deprecated)."""
+    return RedirectResponse(url="/portfolio", status_code=307)
 
 
 @app.get("/portfolio", response_class=HTMLResponse)

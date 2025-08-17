@@ -46,14 +46,27 @@
                 <button id="refresh-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
                     Refresh Data
                 </button>
+                <button id="save-db-btn" class="px-3 py-2 rounded-xl shadow bg-green-600 text-white text-sm">
+                    Save to Database
+                </button>
                 <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
                     Export CSV
                 </button>
-                <a href="/" class="px-3 py-2 rounded-xl shadow bg-blue-100 text-blue-700 text-sm">
-                    Data Export Panel
-                </a>
             </div>
         </header>
+
+        <!-- Save-to-DB Progress -->
+        <section id="db-progress" class="bg-white/80 rounded-2xl shadow p-4 hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-sm font-semibold">Saving to database…</h2>
+                <span id="db-progress-percent" class="text-xs opacity-70">0%</span>
+            </div>
+            <div class="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div id="db-progress-bar" class="h-2 bg-green-600" style="width: 0%"></div>
+            </div>
+            <div id="db-progress-message" class="text-xs opacity-80 mt-2">Starting…</div>
+            <div id="db-progress-details" class="text-xs opacity-60"></div>
+        </section>
 
         <!-- Summary Cards -->
         <section id="summary-cards" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -550,6 +563,95 @@
             URL.revokeObjectURL(url);
         }
 
+        // Save-to-DB with SSE progress
+        function startDbProgress() {
+            const box = document.getElementById('db-progress');
+            const bar = document.getElementById('db-progress-bar');
+            const pct = document.getElementById('db-progress-percent');
+            const msg = document.getElementById('db-progress-message');
+            const det = document.getElementById('db-progress-details');
+            box.classList.remove('hidden');
+            bar.style.width = '0%'; pct.textContent = '0%'; msg.textContent = 'Starting…'; det.textContent = '';
+
+            const es = new EventSource('/api/progress');
+            es.onmessage = (event) => {
+                const data = JSON.parse(event.data || '{}');
+                const p = Number(data.progress || 0);
+                bar.style.width = p + '%';
+                pct.textContent = p + '%';
+                msg.textContent = data.message || '';
+                const d = data.details || {};
+                const pieces = [];
+                if (d.records_count) pieces.push(`Records: ${d.records_count}`);
+                if (d.current_sector) pieces.push(`Sector: ${d.current_sector}`);
+                if (d.trade_date) pieces.push(`Date: ${d.trade_date}`);
+                det.textContent = pieces.join('  ');
+
+                if (data.status === 'completed' || data.status === 'error') {
+                    es.close();
+                    if (data.status === 'completed') {
+                        // Hide after a short delay and refresh
+                        setTimeout(() => { box.classList.add('hidden'); }, 1500);
+                        // Soft refresh dashboard after save completes
+                        document.getElementById('refresh-btn').click();
+                    }
+                }
+            };
+            es.onerror = () => { try { es.close(); } catch(_){} };
+            return es;
+        }
+
+        async function saveToDatabase() {
+            const es = startDbProgress();
+            try {
+                const res = await fetch('/api/save-to-database', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail?.message || err.detail?.error || 'Save failed');
+                }
+                return await res.json();
+            } catch (e) {
+                console.error('Save error:', e);
+                const box = document.getElementById('db-progress');
+                const msg = document.getElementById('db-progress-message');
+                msg.textContent = `Error: ${e.message || e}`;
+                // Keep progress box visible for user context
+            } finally {
+                // EventSource closed by handler on completion/error
+            }
+        }
+
+        // Refresh Data with simulated progress
+        function startRefreshProgress() {
+            const box = document.getElementById('db-progress');
+            const bar = document.getElementById('db-progress-bar');
+            const pct = document.getElementById('db-progress-percent');
+            const msg = document.getElementById('db-progress-message');
+            const det = document.getElementById('db-progress-details');
+            box.classList.remove('hidden');
+            let current = 0;
+            bar.style.width = '0%'; pct.textContent = '0%';
+            msg.textContent = 'Refreshing dashboard…';
+            det.textContent = '';
+
+            const interval = setInterval(() => {
+                // Ease up to 95% while data loads
+                current = Math.min(95, current + Math.max(1, Math.floor((100 - current) * 0.08)));
+                bar.style.width = current + '%';
+                pct.textContent = current + '%';
+            }, 180);
+
+            return {
+                finish(success = true) {
+                    clearInterval(interval);
+                    bar.style.width = '100%';
+                    pct.textContent = '100%';
+                    msg.textContent = success ? 'Refreshed' : 'Refresh failed';
+                    setTimeout(() => { box.classList.add('hidden'); }, 900);
+                }
+            };
+        }
+
         // Initialize the dashboard
         async function initDashboard() {
             try {
@@ -615,12 +717,28 @@
             // Export functionality
             document.getElementById('export-btn').addEventListener('click', exportCSV);
 
-            // Refresh functionality
-            document.getElementById('refresh-btn').addEventListener('click', () => {
-                document.getElementById('loading-state').style.display = 'block';
-                document.getElementById('empty-state').style.display = 'none';
-                document.getElementById('portfolio-tbody').innerHTML = '';
-                initDashboard();
+            // Refresh functionality with progress bar
+            document.getElementById('refresh-btn').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                const ctrl = startRefreshProgress();
+                try {
+                    document.getElementById('loading-state').style.display = 'block';
+                    document.getElementById('empty-state').style.display = 'none';
+                    document.getElementById('portfolio-tbody').innerHTML = '';
+                    await initDashboard();
+                    ctrl.finish(true);
+                } catch (err) {
+                    console.error('Refresh failed:', err);
+                    ctrl.finish(false);
+                } finally {
+                    btn.disabled = false;
+                }
+            });
+
+            // Save-to-DB button
+            document.getElementById('save-db-btn').addEventListener('click', () => {
+                saveToDatabase();
             });
 
             // Refresh portfolio functionality
