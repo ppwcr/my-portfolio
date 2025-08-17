@@ -1,26 +1,22 @@
 @echo off
-echo Setting up Portfolio Dashboard Auto-Start...
+echo Setting up Portfolio Dashboard Simple Auto-Start...
 echo.
 
 REM Get the current directory
 set "CURRENT_DIR=%~dp0"
 set "BATCH_PATH=%CURRENT_DIR%start.bat"
 
-REM Create a VBS script to run the batch file hidden
-echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\portfolio_startup.vbs"
-echo WshShell.Run """%BATCH_PATH%""", 0, False >> "%TEMP%\portfolio_startup.vbs"
-
 REM Get the startup folder path
 for /f "tokens=2*" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" /v Startup 2^>nul') do set "STARTUP_FOLDER=%%b"
 
-REM Create shortcut in Startup folder
-echo Creating startup shortcut...
 echo Current directory: %CURRENT_DIR%
 echo Batch path: %BATCH_PATH%
 echo Startup folder: %STARTUP_FOLDER%
+echo.
 
-REM Create the shortcut using PowerShell
-powershell -Command "try { $WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTUP_FOLDER%\Portfolio Dashboard.lnk'); $Shortcut.TargetPath = 'wscript.exe'; $Shortcut.Arguments = '%TEMP%\portfolio_startup.vbs'; $Shortcut.WorkingDirectory = '%CURRENT_DIR%'; $Shortcut.Description = 'Portfolio Dashboard Auto-Start'; $Shortcut.Save(); Write-Host 'Shortcut created successfully' } catch { Write-Host 'Error creating shortcut: ' + $_.Exception.Message; exit 1 }"
+REM Create shortcut directly to the batch file
+echo Creating startup shortcut...
+powershell -Command "try { $WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTUP_FOLDER%\Portfolio Dashboard.lnk'); $Shortcut.TargetPath = '%BATCH_PATH%'; $Shortcut.WorkingDirectory = '%CURRENT_DIR%'; $Shortcut.Description = 'Portfolio Dashboard Auto-Start'; $Shortcut.Save(); Write-Host 'Shortcut created successfully' } catch { Write-Host 'Error creating shortcut: ' + $_.Exception.Message; exit 1 }"
 
 if errorlevel 1 (
     echo.
@@ -33,9 +29,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo ✅ Auto-start setup complete!
+echo ✅ Simple auto-start setup complete!
 echo.
 echo The Portfolio Dashboard will now start automatically when you log in.
+echo Note: This will show a terminal window when starting.
 echo.
 echo To disable auto-start:
 echo 1. Press Win+R, type "shell:startup" and press Enter
