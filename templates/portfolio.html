@@ -103,9 +103,6 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button id="update-database-btn" class="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors" title="Update database with fresh data">
-                        Update Database
-                    </button>
                     <div id="status-timestamp" class="text-xs opacity-60"></div>
                 </div>
             </div>
@@ -1316,18 +1313,18 @@
             }
         }
 
-        // Refresh Data with simulated progress
+        // Refresh Data from database only
         function startRefreshProgress() {
             const box = document.getElementById('db-progress');
             const msg = document.getElementById('db-progress-message');
             const det = document.getElementById('db-progress-details');
             box.classList.remove('hidden');
-            msg.textContent = 'Refreshing dashboard…';
+            msg.textContent = 'Loading from database…';
             det.textContent = '';
 
             return {
                 finish(success = true) {
-                    msg.textContent = success ? '✅ Refreshed' : '❌ Refresh failed';
+                    msg.textContent = success ? '✅ Data refreshed' : '❌ Refresh failed';
                     setTimeout(() => { box.classList.add('hidden'); }, 900);
                 }
             };
@@ -1376,26 +1373,7 @@
                 isUpdating = false;
             }
             
-            // Set up periodic updates every 30 minutes
-            if (autoUpdateInterval) clearInterval(autoUpdateInterval);
-            autoUpdateInterval = setInterval(async () => {
-                if (isUpdating) return; // Skip if already updating
-                
-                updateTimestamp('Updating...');
-                isUpdating = true;
-                
-                try {
-                    await autoUpdateDatabase(true, false); // Regular updates, not full refresh
-                    await refreshDataAfterUpdate();
-                    lastUpdateTime = new Date();
-                    updateTimestamp(`Updated at ${lastUpdateTime.toLocaleTimeString()}`);
-                } catch (error) {
-                    console.warn('Periodic update failed:', error);
-                    updateTimestamp('Update failed', '#ef4444');
-                } finally {
-                    isUpdating = false;
-                }
-            }, 30 * 60 * 1000); // 30 minutes
+            // Note: Periodic updates removed per user request - only update on PC startup
         }
         
         function updateTimestamp(text, color = '') {
@@ -1403,6 +1381,41 @@
             if (timestampEl) {
                 timestampEl.textContent = text;
                 timestampEl.style.color = color;
+            }
+        }
+
+        // Function to refresh data from database only (no updates)
+        async function refreshFromDatabase() {
+            try {
+                // Load existing data from database only
+                const [dashboardData, summaryData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
+                    fetchDashboardData(),
+                    fetchSummaryData(),
+                    fetchMyPortfolio(),
+                    fetchSetIndexData(),
+                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
+                ]);
+                
+                // Display the data
+                if (dashboardData && dashboardData.portfolio_stocks && dashboardData.portfolio_stocks.length > 0) {
+                    originalData = dashboardData.portfolio_stocks || [];
+                    renderDashboard(dashboardData, summaryData, portfolioData);
+                }
+                
+                if (setIndexData && setIndexData.success && setIndexData.data && setIndexData.data.length > 0) {
+                    renderSetIndex(setIndexData);
+                }
+                
+                if (setIndexChartData && setIndexChartData.series && setIndexChartData.series.length > 0) {
+                    renderSetIndexChart(setIndexChartData);
+                }
+                
+                // Hide loading state
+                document.getElementById('loading-state').style.display = 'none';
+                
+            } catch (error) {
+                console.error('Error refreshing data from database:', error);
+                throw error;
             }
         }
 
@@ -1755,9 +1768,8 @@
                     document.getElementById('empty-state').style.display = 'none';
                     document.getElementById('portfolio-tbody').innerHTML = '';
                     
-                    // Removed chart clearing - simple approach
-                    
-                    await initDashboard();
+                    // Refresh from database only (no database updates)
+                    await refreshFromDatabase();
                     ctrl.finish(true);
                 } catch (err) {
                     console.error('Refresh failed:', err);
@@ -1767,42 +1779,7 @@
                 }
             });
 
-            // Note: Auto database update happens on page load
-            
-            // Update Database button functionality (force update)
-            document.getElementById('update-database-btn').addEventListener('click', async (e) => {
-                if (isUpdating) return; // Prevent multiple updates
-                
-                const btn = e.currentTarget;
-                const originalText = btn.textContent;
-                
-                btn.disabled = true;
-                btn.textContent = 'Updating...';
-                isUpdating = true;
-                
-                // Show initial status
-                showStatus('🚀', 'Starting database update...', 'Initializing scraper...', 'info');
-                updateTimestamp('Force updating...');
-                
-                try {
-                    // Use the existing saveToDatabase function which handles both progress bar and status updates
-                    await saveToDatabase();
-                    
-                    // Refresh data after manual update
-                    await refreshDataAfterUpdate();
-                    lastUpdateTime = new Date();
-                    updateTimestamp(`Updated at ${lastUpdateTime.toLocaleTimeString()}`);
-                    
-                } catch (err) {
-                    console.error('Manual database update failed:', err);
-                    showStatus('❌', 'Database update failed', err.message || 'Please check console for details', 'error');
-                    updateTimestamp('Update failed', '#ef4444');
-                } finally {
-                    btn.disabled = false;
-                    btn.textContent = originalText;
-                    isUpdating = false;
-                }
-            });
+            // Note: Database auto-updates on PC startup only
 
 
             // Refresh portfolio functionality
