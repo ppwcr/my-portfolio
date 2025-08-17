@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SET Data Export Panel</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <div class="container">
+        <div class="floating-panel">
+            <div class="panel-header">
+                <h3>Quick Export</h3>
+            </div>
+            
+            <!-- NVDR Section -->
+            <div class="section">
+                <h4>NVDR</h4>
+                <button id="nvdr-btn" class="export-btn" data-endpoint="/api/nvdr/export.xlsx">
+                    <span class="btn-text">NVDR: Download Excel</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+            </div>
+            
+            <!-- Short Sales Section -->
+            <div class="section">
+                <h4>Short Sales</h4>
+                <button id="short-sales-btn" class="export-btn" data-endpoint="/api/short-sales/export.xlsx">
+                    <span class="btn-text">Short Sales: Download Excel</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+            </div>
+            
+            <!-- Investor Type Section -->
+            <div class="section">
+                <h4>Investor Type</h4>
+                <div class="form-group">
+                    <label for="market-select">Market:</label>
+                    <select id="market-select">
+                        <option value="SET">SET</option>
+                        <option value="MAI">MAI</option>
+                    </select>
+                </div>
+                <button id="investor-table-btn" class="export-btn" data-endpoint="/api/investor/table.csv">
+                    <span class="btn-text">Investor Table → CSV</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+                <button id="investor-chart-btn" class="export-btn" data-endpoint="/api/investor/chart.json">
+                    <span class="btn-text">Investor Chart → JSON</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+            </div>
+            
+            <!-- Sector Constituents Section -->
+            <div class="section">
+                <h4>Sector Constituents</h4>
+                <div class="form-group">
+                    <label for="sector-select">Sector:</label>
+                    <select id="sector-select">
+                        <option value="agro">Agro & Food Industry</option>
+                        <option value="consump">Consumer Products</option>
+                        <option value="fincial">Financials</option>
+                        <option value="indus">Industrials</option>
+                        <option value="propcon">Property & Construction</option>
+                        <option value="resourc">Resources</option>
+                        <option value="service">Services</option>
+                        <option value="tech">Technology</option>
+                    </select>
+                </div>
+                <button id="sector-constituents-btn" class="export-btn" data-endpoint="/api/sector/constituents.csv">
+                    <span class="btn-text">Sector Constituents → CSV</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+            </div>
+            
+            <!-- Database Section -->
+            <div class="section database-section">
+                <h4>Save to Database</h4>
+                <p class="database-note">Save all data: Investor Type + 8 Sectors + NVDR + Short Sales to Supabase</p>
+                <button id="save-database-btn" class="export-btn database-btn" data-endpoint="/api/save-to-database">
+                    <span class="btn-text">💾 Save to Database</span>
+                    <span class="btn-spinner" style="display: none;">⏳</span>
+                </button>
+                
+                <!-- Live Progress Display -->
+                <div id="progress-container" style="display: none;">
+                    <div class="progress-header">
+                        <h5 id="progress-title">Progress</h5>
+                        <span id="progress-percentage">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <div id="progress-message" class="progress-message">Starting...</div>
+                    <div id="progress-details" class="progress-details"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Toast container -->
+    <div id="toast-container"></div>
+    
+    <script src="/static/app.js"></script>
+</body>
+</html>
