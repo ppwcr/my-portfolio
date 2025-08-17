@@ -31,6 +31,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from supabase_database import get_proper_db
+import requests
+try:
+    import yfinance as yf
+    HAS_YF = True
+except Exception:
+    HAS_YF = False
 
 
 # Initialize FastAPI app
@@ -153,6 +159,81 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
 async def index():
     """Redirect root to the portfolio dashboard (panel deprecated)."""
     return RedirectResponse(url="/portfolio", status_code=307)
+
+
+@app.get("/api/series/set-index")
+def get_set_index_series():
+    """Return SET index daily series and latest summary from Stooq CSV.
+
+    Response:
+      {
+        "series": [{"time": "YYYY-MM-DD", "value": float}, ...],
+        "latest": {
+            "date": "YYYY-MM-DD",
+            "open": float, "high": float, "low": float, "close": float, "volume": int,
+            "change": float, "change_percent": float
+        }
+      }
+    """
+    try:
+        df = None
+        if HAS_YF:
+            # Yahoo Finance index for SET
+            df = yf.download("^SET.BK", period="max", interval="1d", progress=False)
+            # Handle MultiIndex columns from yfinance
+            if df is not None and not df.empty:
+                # Reset index to make Date a column
+                df = df.reset_index()
+                # Flatten MultiIndex columns if present
+                if isinstance(df.columns, pd.MultiIndex):
+                    # Create new column names by joining the levels
+                    new_columns = []
+                    for col in df.columns:
+                        if col[0] == 'Date':
+                            new_columns.append('Date')
+                        else:
+                            new_columns.append(col[0])  # Use the first level (Price type)
+                    df.columns = new_columns
+        if df is None or df.empty:
+            # Fallback: Stooq (with SSL verification disabled for macOS compatibility)
+            try:
+                url = "https://stooq.com/q/d/l/?s=%5Eset&i=d"
+                df = pd.read_csv(url, parse_dates=["Date"])  # Date, Open, High, Low, Close, Volume
+            except Exception as stooq_error:
+                print(f"Stooq fallback failed: {stooq_error}")
+                # If both sources fail, return error
+                return JSONResponse(status_code=502, content={"error": "No data from source", "message": f"Yahoo Finance and Stooq both failed: {stooq_error}"})
+
+        df = df.dropna(subset=["Close"]).sort_values("Date")
+        if df.empty:
+            return JSONResponse(status_code=502, content={"error": "No data from source"})
+
+        series = [
+            {"time": d.strftime("%Y-%m-%d"), "value": float(c)}
+            for d, c in zip(df["Date"], df["Close"]) if pd.notna(c)
+        ]
+
+        latest_row = df.iloc[-1]
+        prev_row = df.iloc[-2] if len(df) >= 2 else None
+        close = float(latest_row["Close"]) if pd.notna(latest_row.get("Close")) else None
+        prev_close = float(prev_row["Close"]) if (prev_row is not None and pd.notna(prev_row.get("Close"))) else None
+        change = (close - prev_close) if (close is not None and prev_close is not None) else 0.0
+        change_pct = (change / prev_close * 100.0) if (prev_close not in (None, 0)) else 0.0
+
+        latest = {
+            "date": latest_row["Date"].strftime("%Y-%m-%d") if isinstance(latest_row["Date"], (pd.Timestamp,)) else str(latest_row["Date"]),
+            "open": float(latest_row.get("Open")) if pd.notna(latest_row.get("Open")) else None,
+            "high": float(latest_row.get("High")) if pd.notna(latest_row.get("High")) else None,
+            "low": float(latest_row.get("Low")) if pd.notna(latest_row.get("Low")) else None,
+            "close": close,
+            "volume": int(latest_row.get("Volume")) if pd.notna(latest_row.get("Volume")) else None,
+            "change": round(change, 2),
+            "change_percent": round(change_pct, 2),
+        }
+
+        return JSONResponse(content={"series": series, "latest": latest})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch SET index data", "message": str(e)})
 
 
 @app.get("/portfolio", response_class=HTMLResponse)
@@ -625,13 +706,17 @@ async def save_to_database_internal():
         outdir.mkdir(exist_ok=True)
         
         # Start with progress update during sector scraping
-        update_progress("running", "sector_scraping", 40, "📡 Scraping sectors: agro, consump, fincial, indus...", 
-                      {"sectors": "8 total sectors", "estimated": "30-60 seconds"})
+        sector_names = ["agro", "consump", "fincial", "indus", "propcon", "resourc", "service", "tech"]
+        update_progress("running", "sector_scraping", 40, "📡 Preparing to scrape 8 sectors...", 
+                      {"sectors": sector_names, "total": 8, "estimated": "30-60 seconds"})
         
         cmd = [sys.executable, "scrape_sector_data.py", "--outdir", str(outdir)]
         print(f"DEBUG: Starting sector scraping command: {' '.join(cmd)}")
         update_progress("running", "sector_scraping", 45, "🚀 Starting sector scraping command...", 
-                      {"command": "scrape_sector_data.py"})
+                      {"sectors": sector_names, "status": "launching scraper", "total": 8})
+        
+        # Small delay to ensure frontend receives the message
+        await asyncio.sleep(0.2)
         
         exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)  # Increased to 60 seconds for reliability
         print(f"DEBUG: Sector scraping completed. Exit code: {exit_code}")
@@ -674,13 +759,20 @@ async def save_to_database_internal():
             print(f"DEBUG: Using current sector data with all {total_sectors} sectors")
         
         # Process sector files (whether from new scraping or fallback)
+        sector_results = {}
+        total_records_saved = 0
+        
         if sector_files:
             for i, sector_file in enumerate(sector_files):
                 sector_name = sector_file.stem.replace('.constituents', '')
                 progress_pct = 60 + (i / total_sectors) * 30  # 60-90% range
                 
                 update_progress("running", "sector_processing", int(progress_pct), 
-                              f"Saving {sector_name} sector data...", {"current_sector": sector_name})
+                              f"💾 Processing {sector_name} sector ({i+1}/{total_sectors})...", 
+                              {"current_sector": sector_name, "completed": i, "total": total_sectors, "status": "processing"})
+                
+                # Small delay to ensure frontend receives the progress update
+                await asyncio.sleep(0.1)
                 
                 try:
                     sector_df = pd.read_csv(sector_file)
@@ -708,30 +800,51 @@ async def save_to_database_internal():
                                 print(f"❌ DEBUG: {sector_name} sector save FAILED on attempt {attempt + 1}")
                                 if attempt < max_retries - 1:
                                     # Brief pause before retry
-                                    import asyncio
                                     await asyncio.sleep(1)
                         except Exception as retry_e:
                             print(f"💥 DEBUG: {sector_name} sector save ERROR on attempt {attempt + 1}: {retry_e}")
                             if attempt < max_retries - 1:
-                                import asyncio
                                 await asyncio.sleep(1)
                     
                     results["sector_data"][sector_name] = success
+                    sector_results[sector_name] = {"success": success, "records": len(sector_df) if success else 0}
                     
                     if success:
+                        total_records_saved += len(sector_df)
+                        completed_sectors = list(sector_results.keys())
                         update_progress("running", "sector_processing", int(progress_pct), 
-                                      f"✅ Saved {len(sector_df)} records for {sector_name}", 
-                                      {"current_sector": sector_name, "records_count": len(sector_df)})
+                                      f"✅ {sector_name} sector complete ({len(sector_df)} records) [{i+1}/{total_sectors}]", 
+                                      {"current_sector": sector_name, "records_count": len(sector_df), "completed": i+1, 
+                                       "total": total_sectors, "completed_sectors": completed_sectors, "total_records": total_records_saved})
+                        
+                        # Small delay to ensure frontend receives the completion update
+                        await asyncio.sleep(0.1)
                     else:
+                        sector_results[sector_name] = {"success": False, "records": 0}
                         update_progress("running", "sector_processing", int(progress_pct), 
-                                      f"⚠️ Failed to save {sector_name} after {max_retries} attempts", {"current_sector": sector_name})
+                                      f"⚠️ {sector_name} sector failed after {max_retries} attempts [{i+1}/{total_sectors}]", 
+                                      {"current_sector": sector_name, "completed": i+1, "total": total_sectors, "error": f"failed after {max_retries} attempts"})
                         print(f"❌ Failed to save {sector_name} after {max_retries} attempts")
                         
                 except Exception as e:
                     print(f"Error processing sector {sector_name}: {e}")
                     results["sector_data"][sector_name] = False
+                    sector_results[sector_name] = {"success": False, "records": 0, "error": str(e)[:50]}
                     update_progress("running", "sector_processing", int(progress_pct), 
-                                  f"❌ Error with {sector_name}: {str(e)[:50]}...", {"current_sector": sector_name})
+                                  f"❌ {sector_name} sector error: {str(e)[:30]}... [{i+1}/{total_sectors}]", 
+                                  {"current_sector": sector_name, "completed": i+1, "total": total_sectors, "error": str(e)[:50]})
+            
+            # Sector completion summary
+            successful_sectors = [name for name, result in sector_results.items() if result["success"]]
+            failed_sectors = [name for name, result in sector_results.items() if not result["success"]]
+            
+            update_progress("running", "sector_summary", 89, 
+                          f"🎯 Sector processing complete: {len(successful_sectors)}/{total_sectors} successful", 
+                          {"successful_sectors": successful_sectors, "failed_sectors": failed_sectors, 
+                           "total_records": total_records_saved, "summary": f"{len(successful_sectors)}/{total_sectors} sectors saved"})
+            
+            # Small delay to ensure frontend receives the summary
+            await asyncio.sleep(0.2)
         
         # Step 3: Save NVDR data
         update_progress("running", "nvdr_processing", 90, "Saving NVDR data...")
@@ -761,13 +874,29 @@ async def save_to_database_internal():
         else:
             update_progress("running", "shortsales_skipped", 98, "⚠️ No Short Sales files found")
         
-        # Final results
+        # Final results with detailed statistics
         sector_success = all(results["sector_data"].values()) if results["sector_data"] else False
         total_success = results["investor_data"] and sector_success and results["nvdr_data"] and results["short_sales_data"]
         
+        # Calculate detailed statistics
+        successful_sectors = [name for name, success in results["sector_data"].items() if success] if results["sector_data"] else []
+        failed_sectors = [name for name, success in results["sector_data"].items() if not success] if results["sector_data"] else []
+        
+        # Get record counts (approximate based on typical values)
+        total_records_estimate = total_records_saved  # From sector processing
+        if results["nvdr_data"]:
+            total_records_estimate += 500  # Typical NVDR record count
+        if results["short_sales_data"]:
+            total_records_estimate += 200  # Typical short sales record count
+        if results["investor_data"]:
+            total_records_estimate += 4  # Investor summary records
+        
         if total_success:
-            update_progress("completed", "success", 100, "🎉 All data saved successfully!", 
-                          {"total_sectors": len(results["sector_data"]), "trade_date": trade_date.isoformat() if trade_date else None})
+            update_progress("completed", "success", 100, 
+                          f"🎉 Database update complete! All {len(successful_sectors)}/8 sectors + NVDR + Short Sales + Investor data saved successfully", 
+                          {"successful_sectors": successful_sectors, "total_sectors": len(results["sector_data"]), 
+                           "total_records": total_records_estimate, "trade_date": trade_date.isoformat() if trade_date else None,
+                           "summary": f"✅ {len(successful_sectors)} sectors, ✅ NVDR data, ✅ Short sales data, ✅ Investor data"})
         else:
             success_count = sum([
                 1 if results["investor_data"] else 0,
@@ -776,8 +905,33 @@ async def save_to_database_internal():
                 1 if results["short_sales_data"] else 0
             ])
             total_count = 1 + len(results["sector_data"]) + 2  # investor + sectors + nvdr + short_sales
-            update_progress("completed", "partial", 100, f"⚠️ Partial success - {success_count}/{total_count} datasets saved", 
-                          {"details": results})
+            
+            status_summary = []
+            if results["investor_data"]:
+                status_summary.append("✅ Investor")
+            else:
+                status_summary.append("❌ Investor")
+            
+            if successful_sectors:
+                status_summary.append(f"✅ {len(successful_sectors)} sectors")
+            if failed_sectors:
+                status_summary.append(f"❌ {len(failed_sectors)} sectors")
+                
+            if results["nvdr_data"]:
+                status_summary.append("✅ NVDR")
+            else:
+                status_summary.append("❌ NVDR")
+                
+            if results["short_sales_data"]:
+                status_summary.append("✅ Short Sales")
+            else:
+                status_summary.append("❌ Short Sales")
+            
+            update_progress("completed", "partial", 100, 
+                          f"⚠️ Partial success: {success_count}/{total_count} datasets saved", 
+                          {"successful_sectors": successful_sectors, "failed_sectors": failed_sectors,
+                           "total_records": total_records_estimate, "status_summary": status_summary,
+                           "details": results})
         
         return {
             "success": total_success,

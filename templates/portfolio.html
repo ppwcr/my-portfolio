@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Portfolio Dashboard - NVDR & Short Sales</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Debug library loading
+        window.addEventListener('load', () => {
+            console.log('Page loaded, checking Chart.js...');
+            console.log('Chart available:', !!window.Chart);
+        });
+    </script>
     <style>
         .loading {
             animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
@@ -47,17 +55,24 @@
             </div>
         </header>
 
+        
+
         <!-- Status Bar -->
-        <section id="status-bar" class="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-xl p-3 hidden">
+        <section id="status-bar" class="bg-gradient-to-r from-blue-50 to-green-50 border border-blue-200 rounded-xl p-3">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
                     <div id="status-icon" class="text-lg">📊</div>
                     <div>
-                        <div id="status-message" class="text-sm font-medium">Auto-updating database...</div>
+                        <div id="status-message" class="text-sm font-medium">Database ready</div>
                         <div id="status-details" class="text-xs opacity-70"></div>
                     </div>
                 </div>
-                <div id="status-timestamp" class="text-xs opacity-60"></div>
+                <div class="flex items-center gap-2">
+                    <button id="update-database-btn" class="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors">
+                        Update Database
+                    </button>
+                    <div id="status-timestamp" class="text-xs opacity-60"></div>
+                </div>
             </div>
         </section>
 
@@ -74,46 +89,58 @@
             <div id="db-progress-details" class="text-xs opacity-60"></div>
         </section>
 
-        <!-- SET Index Table -->
-        <section class="bg-white/80 rounded-2xl shadow">
-            <div class="p-4 border-b">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-lg font-semibold">SET Index</h2>
-                    <div class="flex gap-2 items-center">
-                        <span id="set-index-timestamp" class="text-xs opacity-60">Loading...</span>
-                        <button id="refresh-index-btn" class="px-3 py-1 rounded-lg shadow bg-blue-100 text-blue-700 text-sm">
-                            Refresh
-                        </button>
+        <!-- SET Index Table + Chart (side by side) -->
+        <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Left: existing SET Index table card -->
+            <div class="bg-white/80 rounded-2xl shadow">
+                <div class="p-4 border-b">
+                    <div class="flex items-center justify-between">
+                        <h2 class="text-lg font-semibold">SET Index</h2>
+                        <div class="flex gap-2 items-center">
+                            <span id="set-index-timestamp" class="text-xs opacity-60">Loading...</span>
+                            <button id="refresh-index-btn" class="px-3 py-1 rounded-lg shadow bg-blue-100 text-blue-700 text-sm">
+                                Refresh
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b bg-white/70">
+                                <th class="py-2 px-3 text-left">Index</th>
+                                <th class="py-2 px-3 text-right">Last</th>
+                                <th class="py-2 px-3 text-right">Change</th>
+                                <th class="py-2 px-3 text-right">Volume ('000 Shares)</th>
+                                <th class="py-2 px-3 text-right">Value (M.Baht)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="set-index-tbody">
+                            <!-- SET index data will be populated here -->
+                        </tbody>
+                    </table>
+                    
+                    <!-- Loading state for SET Index -->
+                    <div id="set-index-loading" class="py-8 text-center text-slate-500">
+                        <div class="loading">Loading SET index data...</div>
+                    </div>
+                    
+                    <!-- Empty state for SET Index -->
+                    <div id="set-index-empty" class="py-8 text-center text-slate-500" style="display: none;">
+                        <div class="mb-2">📊</div>
+                        <div>No SET index data available</div>
+                        <div class="text-xs mt-1">Please check your connection and try refreshing</div>
                     </div>
                 </div>
             </div>
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b bg-white/70">
-                            <th class="py-2 px-3 text-left">Index</th>
-                            <th class="py-2 px-3 text-right">Last</th>
-                            <th class="py-2 px-3 text-right">Change</th>
-                            <th class="py-2 px-3 text-right">Volume ('000 Shares)</th>
-                            <th class="py-2 px-3 text-right">Value (M.Baht)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="set-index-tbody">
-                        <!-- SET index data will be populated here -->
-                    </tbody>
-                </table>
-                
-                <!-- Loading state for SET Index -->
-                <div id="set-index-loading" class="py-8 text-center text-slate-500">
-                    <div class="loading">Loading SET index data...</div>
+
+            <!-- Right: Lightweight Charts (SET) -->
+            <div class="bg-white/80 rounded-2xl shadow p-2">
+                <div class="flex items-center justify-between px-2 pt-1">
+                    <h2 class="text-sm font-semibold">SET Index — Daily</h2>
+                    <span id="set-latest-meta" class="text-xs opacity-60">Loading…</span>
                 </div>
-                
-                <!-- Empty state for SET Index -->
-                <div id="set-index-empty" class="py-8 text-center text-slate-500" style="display: none;">
-                    <div class="mb-2">📊</div>
-                    <div>No SET index data available</div>
-                    <div class="text-xs mt-1">Please check your connection and try refreshing</div>
-                </div>
+                <div id="setChart" class="w-full h-[420px] md:h-[520px]"></div>
             </div>
         </section>
 
@@ -351,7 +378,14 @@
         }
         
         function hideStatus() {
-            document.getElementById('status-bar').classList.add('hidden');
+            // Reset status to default instead of hiding the entire bar
+            const statusIcon = document.getElementById('status-icon');
+            const statusMessage = document.getElementById('status-message');
+            const statusDetails = document.getElementById('status-details');
+            
+            statusIcon.textContent = '📊';
+            statusMessage.textContent = 'Database ready';
+            statusDetails.textContent = '';
         }
         
         function autoHideStatus(delay = 5000) {
@@ -393,6 +427,46 @@
             };
         }
         
+        function showDatabaseUpdateStatus(progressData) {
+            const { status, step, progress, message, details } = progressData;
+            
+            if (status === 'completed') {
+                showStatus('✅', 'Database update completed', message, 'success');
+                autoHideStatus(5000);
+                return;
+            }
+            
+            if (status === 'error') {
+                showStatus('❌', 'Database update failed', message, 'error');
+                autoHideStatus(10000);
+                return;
+            }
+            
+            // Map different database update steps to user-friendly messages
+            let statusIcon = '🔄';
+            let statusMessage = message || 'Updating database...';
+            let statusDetails = '';
+            
+            if (step === 'Initializing' || message.includes('Starting')) {
+                statusIcon = '🚀';
+                statusMessage = 'Starting database update...';
+            } else if (step === 'Scraping' || message.includes('scraping')) {
+                statusIcon = '📊';
+                statusMessage = 'Scraping market data...';
+                statusDetails = details || '';
+            } else if (step === 'Saving' || message.includes('Saving')) {
+                statusIcon = '💾';
+                statusMessage = 'Saving to database...';
+                statusDetails = details || '';
+            } else if (step === 'Processing' || message.includes('Processing')) {
+                statusIcon = '⚙️';
+                statusMessage = 'Processing data...';
+                statusDetails = details || '';
+            }
+            
+            showStatus(statusIcon, statusMessage, statusDetails, 'info');
+        }
+
         function updateScrapingStatus(progressData) {
             const { status, step, progress, message, details } = progressData;
             
@@ -416,35 +490,31 @@
                 return;
             }
             
-            // Map different scraping steps to user-friendly messages
+            // Extract icon from message if present, otherwise use default mapping
             let statusIcon = '🔄';
             let statusMessage = message || 'Processing...';
-            let statusDetails = '';
+            let statusDetails = `${progress}% complete`;
             
-            if (step === 'Initializing' || message.includes('Starting')) {
-                statusIcon = '🚀';
-                statusMessage = 'Starting data collection...';
-                statusDetails = 'Preparing scrapers';
-            } else if (message.includes('investor') || details?.current_step?.includes('investor')) {
-                statusIcon = '👥';
-                statusMessage = 'Scraping investor data...';
-                statusDetails = 'Foreign vs Local trading patterns';
-            } else if (message.includes('sector') || details?.current_sector) {
-                statusIcon = '🏭';
-                statusMessage = 'Scraping sector data...';
-                statusDetails = details?.current_sector ? `Processing ${details.current_sector} sector` : 'Stock data by sector';
-            } else if (message.includes('NVDR') || details?.current_step?.includes('nvdr')) {
-                statusIcon = '📊';
-                statusMessage = 'Downloading NVDR data...';
-                statusDetails = 'Excel file from SET website';
-            } else if (message.includes('short') || message.includes('Short') || details?.current_step?.includes('short')) {
-                statusIcon = '📉';
-                statusMessage = 'Downloading short sales data...';
-                statusDetails = 'Excel file from SET website';
-            } else if (message.includes('Saving') || message.includes('database')) {
-                statusIcon = '💾';
-                statusMessage = 'Saving to database...';
-                statusDetails = `${progress}% complete`;
+            // Extract emoji from the beginning of the message if present
+            const emojiMatch = message.match(/^([\u{1F000}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]+)/u);
+            if (emojiMatch) {
+                statusIcon = emojiMatch[1];
+                statusMessage = message.substring(emojiMatch[1].length).trim();
+            }
+            
+            // Add detailed information from details object if available
+            if (details) {
+                if (details.current_sector) {
+                    statusDetails = `${details.current_sector} sector (${details.completed || 0}/${details.total || 8})`;
+                } else if (details.total_records) {
+                    statusDetails = `${details.total_records} records processed`;
+                } else if (details.records_count) {
+                    statusDetails = `${details.records_count} records saved`;
+                } else if (details.summary) {
+                    statusDetails = details.summary;
+                } else {
+                    statusDetails = `${progress}% complete`;
+                }
             }
             
             showStatus(statusIcon, statusMessage, statusDetails, 'info');
@@ -891,6 +961,9 @@
                 if (d.trade_date) pieces.push(`Date: ${d.trade_date}`);
                 det.textContent = pieces.join('  ');
 
+                // Also update the status bar with the same information
+                showDatabaseUpdateStatus(data);
+
                 if (data.status === 'completed' || data.status === 'error') {
                     es.close();
                     if (data.status === 'completed') {
@@ -1038,6 +1111,119 @@
                 });
             }
 
+            // Fetch and render SET index chart (table already rendered by /api/set-index)
+            (async function initSetIndex() {
+                try {
+                    const res = await fetch('/api/series/set-index');
+                    const data = await res.json();
+                    if (!data || !data.series) return;
+                    const latest = data.latest || {};
+                    const chgClass = latest.change > 0 ? 'text-green-600' : (latest.change < 0 ? 'text-red-600' : '');
+                    const meta = document.getElementById('set-latest-meta');
+                    if (meta && latest && latest.close != null) {
+                        meta.textContent = `${latest.date} • Close ${latest.close} (${latest.change > 0 ? '+' : ''}${latest.change} / ${latest.change_percent}%)`;
+                        meta.className = `text-xs ${chgClass.replace('600','700')} opacity-80`;
+                    }
+
+                                        // Wait for Chart.js to load
+                    let retries = 0;
+                    const maxRetries = 20;
+                    
+                    const waitForLibrary = () => {
+                        return new Promise((resolve, reject) => {
+                            const checkLibrary = () => {
+                                console.log('Checking Chart.js library...', {
+                                    exists: !!window.Chart,
+                                    retries: retries
+                                });
+                                
+                                if (window.Chart) {
+                                    console.log('Chart.js library loaded successfully');
+                                    resolve();
+                                } else if (retries < maxRetries) {
+                                    retries++;
+                                    setTimeout(checkLibrary, 100);
+                                } else {
+                                    reject(new Error('Chart.js library failed to load after ' + maxRetries + ' attempts'));
+                                }
+                            };
+                            checkLibrary();
+                        });
+                    };
+
+                    await waitForLibrary();
+
+                    // Render chart with Chart.js
+                    const container = document.getElementById('setChart');
+                    console.log('Chart container found:', !!container);
+                    
+                    if (container) {
+                        try {
+                            console.log('Creating Chart.js chart...');
+                            
+                            // Clear container and create canvas
+                            container.innerHTML = '<canvas id="setChartCanvas"></canvas>';
+                            const canvas = document.getElementById('setChartCanvas');
+                            canvas.width = container.clientWidth || 800;
+                            canvas.height = container.clientHeight || 400;
+                            
+                            // Prepare data for Chart.js
+                            const chartData = {
+                                labels: data.series.map(item => item.time),
+                                datasets: [{
+                                    label: 'SET Index',
+                                    data: data.series.map(item => item.value),
+                                    borderColor: '#1e40af',
+                                    backgroundColor: 'rgba(30,64,175,0.1)',
+                                    borderWidth: 2,
+                                    fill: true,
+                                    tension: 0.1,
+                                    pointRadius: 0,
+                                    pointHoverRadius: 0
+                                }]
+                            };
+                            
+                            const chart = new window.Chart(canvas, {
+                                type: 'line',
+                                data: chartData,
+                                options: {
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    plugins: {
+                                        legend: {
+                                            display: false
+                                        }
+                                    },
+                                    scales: {
+                                        x: {
+                                            display: true,
+                                            grid: {
+                                                color: '#eee'
+                                            }
+                                        },
+                                        y: {
+                                            display: true,
+                                            grid: {
+                                                color: '#eee'
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                            
+                            console.log('Chart.js chart created successfully!');
+                            
+                        } catch (chartError) {
+                            console.error('Chart.js creation failed:', chartError);
+                        }
+                    } else {
+                        console.warn('Chart container not found');
+                    }
+                } catch (e) {
+                    console.warn('SET index init failed:', e);
+                }
+            })();
+
             // Sort functionality
             document.querySelectorAll('.sortable').forEach(el => {
                 el.addEventListener('click', () => {
@@ -1068,6 +1254,31 @@
             });
 
             // Note: Auto database update happens on page load
+            
+            // Update Database button functionality
+            document.getElementById('update-database-btn').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                const originalText = btn.textContent;
+                
+                btn.disabled = true;
+                btn.textContent = 'Updating...';
+                
+                // Show initial status
+                showStatus('🚀', 'Starting database update...', 'Initializing scraper...', 'info');
+                
+                try {
+                    // Use the existing saveToDatabase function which handles both progress bar and status updates
+                    await saveToDatabase();
+                    
+                } catch (err) {
+                    console.error('Manual database update failed:', err);
+                    showStatus('❌', 'Database update failed', err.message || 'Please check console for details', 'error');
+                    autoHideStatus(10000);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            });
 
             // Refresh portfolio functionality
             document.getElementById('refresh-portfolio-btn').addEventListener('click', () => {
@@ -1080,14 +1291,86 @@
                 const loadingState = document.getElementById('set-index-loading');
                 const tbody = document.getElementById('set-index-tbody');
                 
-                btn.disabled = true;
-                btn.textContent = 'Loading...';
-                loadingState.style.display = 'block';
-                tbody.innerHTML = '';
-                
                 try {
+                    btn.disabled = true;
+                    btn.textContent = 'Refreshing…';
+                    loadingState.style.display = 'block';
+                    tbody.innerHTML = '';
+
                     const setIndexData = await fetchSetIndexData();
                     renderSetIndex(setIndexData);
+
+                    // Refresh chart and meta too
+                    try {
+                        const res = await fetch('/api/series/set-index');
+                        const data = await res.json();
+                        const latest = data.latest || {};
+                        const chgClass = latest.change > 0 ? 'text-green-600' : (latest.change < 0 ? 'text-red-600' : '');
+                        const meta = document.getElementById('set-latest-meta');
+                        if (meta && latest && latest.close != null) {
+                            meta.textContent = `${latest.date} • Close ${latest.close} (${latest.change > 0 ? '+' : ''}${latest.change} / ${latest.change_percent}%)`;
+                            meta.className = `text-xs ${chgClass.replace('600','700')} opacity-80`;
+                        }
+                        if (window.Chart && document.getElementById('setChart')) {
+                            const container = document.getElementById('setChart');
+                            try {
+                                // Clear container and create canvas
+                                container.innerHTML = '<canvas id="setChartCanvas"></canvas>';
+                                const canvas = document.getElementById('setChartCanvas');
+                                canvas.width = container.clientWidth || 800;
+                                canvas.height = container.clientHeight || 400;
+                                
+                                // Prepare data for Chart.js
+                                const chartData = {
+                                    labels: data.series.map(item => item.time),
+                                    datasets: [{
+                                        label: 'SET Index',
+                                        data: data.series.map(item => item.value),
+                                        borderColor: '#1e40af',
+                                        backgroundColor: 'rgba(30,64,175,0.1)',
+                                        borderWidth: 2,
+                                        fill: true,
+                                        tension: 0.1,
+                                        pointRadius: 0,
+                                        pointHoverRadius: 0
+                                    }]
+                                };
+                                
+                                const chart = new window.Chart(canvas, {
+                                    type: 'line',
+                                    data: chartData,
+                                    options: {
+                                        responsive: true,
+                                        maintainAspectRatio: false,
+                                        plugins: {
+                                            legend: {
+                                                display: false
+                                            }
+                                        },
+                                        scales: {
+                                            x: {
+                                                display: true,
+                                                grid: {
+                                                    color: '#eee'
+                                                }
+                                            },
+                                            y: {
+                                                display: true,
+                                                grid: {
+                                                    color: '#eee'
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+                                
+                                console.log('Chart.js refresh chart created successfully!');
+                                
+                            } catch (chartError) {
+                                console.error('Chart.js refresh failed:', chartError);
+                            }
+                        }
+                    } catch (e) { /* ignore chart refresh errors */ }
                 } catch (error) {
                     console.error('Error refreshing SET index:', error);
                 } finally {

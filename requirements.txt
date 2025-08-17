@@ -27,3 +27,4 @@ xlrd>=2.0.1
 
 # Environment Variables
 python-dotenv>=1.0.0
+yfinance>=0.2.30
