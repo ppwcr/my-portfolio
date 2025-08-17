@@ -25,6 +25,10 @@ import uvicorn
 import pandas as pd
 import asyncio
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from supabase_database import get_proper_db
 
@@ -149,6 +153,12 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
 async def index(request: Request):
     """Serve the main page with floating panel UI"""
     return templates.TemplateResponse("index.html", {"request": request})
+
+
+@app.get("/portfolio", response_class=HTMLResponse)
+async def portfolio_dashboard(request: Request):
+    """Serve the portfolio dashboard page"""
+    return templates.TemplateResponse("portfolio.html", {"request": request})
 
 
 @app.get("/api/progress")
@@ -687,6 +697,176 @@ async def save_to_database():
             status_code=500,
             detail={
                 "error": "Database save failed",
+                "message": str(e)
+            }
+        )
+
+
+@app.get("/api/portfolio/dashboard")
+async def get_portfolio_dashboard():
+    """Get portfolio dashboard data with latest investor summary, sector summary, and individual stock data"""
+    try:
+        db = get_proper_db()
+        
+        # Get latest trade date from any of the tables
+        latest_trade_date = None
+        
+        # Try to get latest trade date from investor_summary
+        try:
+            investor_result = db.client.table('investor_summary').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+            if investor_result.data:
+                latest_trade_date = investor_result.data[0]['trade_date']
+        except:
+            pass
+        
+        # If no investor data, try sector_data
+        if not latest_trade_date:
+            try:
+                sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                if sector_result.data:
+                    latest_trade_date = sector_result.data[0]['trade_date']
+            except:
+                pass
+        
+        # Get investor summary data for latest date
+        investor_summary = []
+        if latest_trade_date:
+            investor_result = db.client.table('investor_summary').select('*').eq('trade_date', latest_trade_date).order('created_at', desc=True).execute()
+            
+            # Get unique investor types (latest entry for each type)
+            seen_types = set()
+            unique_investors = []
+            for item in investor_result.data if investor_result.data else []:
+                if item['investor_type'] not in seen_types:
+                    unique_investors.append(item)
+                    seen_types.add(item['investor_type'])
+            
+            # Sort in the same order as CSV: Local Institutions, Proprietary Trading, Foreign Investors, Local Individuals
+            order = ['Local Institutions', 'Proprietary Trading', 'Foreign Investors', 'Local Individuals']
+            def get_sort_key(investor):
+                investor_type = investor['investor_type']
+                try:
+                    return order.index(investor_type)
+                except ValueError:
+                    return 999  # Put unknown types at the end
+            
+            investor_summary = sorted(unique_investors, key=get_sort_key)
+        
+        # Get sector summary (count of stocks and average prices by sector)
+        sector_summary = []
+        if latest_trade_date:
+            sector_result = db.client.table('sector_data').select('sector, last_price, symbol').eq('trade_date', latest_trade_date).execute()
+            sector_data = sector_result.data if sector_result.data else []
+            
+            # Group by sector
+            sectors = {}
+            for item in sector_data:
+                sector = item['sector']
+                if sector not in sectors:
+                    sectors[sector] = {'count': 0, 'total_price': 0, 'prices': []}
+                
+                if item['last_price'] is not None:
+                    sectors[sector]['count'] += 1
+                    sectors[sector]['total_price'] += item['last_price']
+                    sectors[sector]['prices'].append(item['last_price'])
+            
+            # Calculate averages
+            for sector, data in sectors.items():
+                avg_price = data['total_price'] / data['count'] if data['count'] > 0 else 0
+                sector_summary.append({
+                    'sector': sector,
+                    'stock_count': data['count'],
+                    'avg_price': round(avg_price, 2)
+                })
+        
+        # Get individual stock data (combining sector_data, nvdr_trading, short_sales_trading)
+        portfolio_stocks = []
+        if latest_trade_date:
+            # Get all stocks with prices from sector_data
+            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector').eq('trade_date', latest_trade_date).execute()
+            stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+            
+            # Get NVDR data
+            nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', latest_trade_date).execute()
+            nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+            
+            # Get Short Sales data
+            short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', latest_trade_date).execute()
+            short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+            
+            # Combine all data
+            all_symbols = set(stocks_data.keys()) | set(nvdr_data.keys()) | set(short_data.keys())
+            
+            for symbol in all_symbols:
+                stock_info = stocks_data.get(symbol, {})
+                portfolio_stocks.append({
+                    'symbol': symbol,
+                    'close': stock_info.get('last_price', 0),
+                    'sector': stock_info.get('sector', ''),
+                    'nvdr': round(nvdr_data.get(symbol, 0) / 1000000, 2) if nvdr_data.get(symbol) else 0,  # Convert to millions
+                    'shortMB': round(short_data.get(symbol, 0) / 1000000, 2) if short_data.get(symbol) else 0,  # Convert to millions
+                })
+        
+        return JSONResponse(content={
+            'trade_date': latest_trade_date,
+            'investor_summary': investor_summary,
+            'sector_summary': sector_summary,
+            'portfolio_stocks': portfolio_stocks
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to get portfolio dashboard data",
+                "message": str(e)
+            }
+        )
+
+
+@app.get("/api/portfolio/summary")
+async def get_portfolio_summary():
+    """Get summary statistics for the portfolio dashboard"""
+    try:
+        db = get_proper_db()
+        
+        # Get latest trade date
+        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+        latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        
+        if not latest_trade_date:
+            return JSONResponse(content={'error': 'No data available'})
+        
+        # Count total symbols
+        stocks_result = db.client.table('sector_data').select('symbol').eq('trade_date', latest_trade_date).execute()
+        total_symbols = len(stocks_result.data) if stocks_result.data else 0
+        
+        # Get NVDR totals
+        nvdr_result = db.client.table('nvdr_trading').select('value_net').eq('trade_date', latest_trade_date).execute()
+        total_nvdr = sum(item['value_net'] for item in nvdr_result.data if item['value_net'] is not None) if nvdr_result.data else 0
+        
+        # Get Short Sales totals
+        short_result = db.client.table('short_sales_trading').select('short_value_baht').eq('trade_date', latest_trade_date).execute()
+        total_short = sum(item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None) if short_result.data else 0
+        
+        # Calculate average price
+        prices_result = db.client.table('sector_data').select('last_price').eq('trade_date', latest_trade_date).execute()
+        prices = [item['last_price'] for item in prices_result.data if item['last_price'] is not None] if prices_result.data else []
+        avg_price = sum(prices) / len(prices) if prices else 0
+        
+        return JSONResponse(content={
+            'trade_date': latest_trade_date,
+            'total_symbols': total_symbols,
+            'avg_price': round(avg_price, 2),
+            'total_nvdr_mb': round(total_nvdr / 1000000, 2),  # Convert to millions
+            'total_short_mb': round(total_short / 1000000, 2)  # Convert to millions
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to get portfolio summary",
                 "message": str(e)
             }
         )

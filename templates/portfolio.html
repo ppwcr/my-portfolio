@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Dashboard - NVDR & Short Sales</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .table-cell {
+            font-variant-numeric: tabular-nums;
+        }
+        
+        .positive {
+            color: rgb(22 163 74);
+        }
+        
+        .negative {
+            color: rgb(220 38 38);
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 text-slate-900">
+    <div class="max-w-7xl mx-auto p-6 grid gap-6">
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+            <div>
+                <h1 class="text-2xl font-bold">Portfolio Dashboard — NVDR & Short Sales</h1>
+                <p class="text-sm opacity-70">Symbol • ราคาปิด • NVDR • Short Sales</p>
+                <p id="trade-date" class="text-xs opacity-50 mt-1">Loading trade date...</p>
+            </div>
+            <div class="flex gap-2 items-center">
+                <input
+                    id="search-input"
+                    placeholder="Search symbol…"
+                    class="px-3 py-2 rounded-xl border bg-white shadow-inner text-sm"
+                />
+                <button id="refresh-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
+                    Refresh Data
+                </button>
+                <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
+                    Export CSV
+                </button>
+                <a href="/" class="px-3 py-2 rounded-xl shadow bg-blue-100 text-blue-700 text-sm">
+                    Data Export Panel
+                </a>
+            </div>
+        </header>
+
+        <!-- Summary Cards -->
+        <section id="summary-cards" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <!-- Cards will be populated by JavaScript -->
+        </section>
+
+        <!-- Investor Summary Table -->
+        <section id="investor-section" class="bg-white/80 rounded-2xl shadow p-4" style="display: none;">
+            <h2 class="text-lg font-semibold mb-3">Investor Summary - Latest Trade Date</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                    <thead>
+                        <tr class="border-b bg-white/70">
+                            <th rowspan="2" class="py-2 px-2 text-left border-r">Investor Type</th>
+                            <th colspan="5" class="py-1 px-2 text-center border-r bg-blue-50">Daily (Latest Trade Date)</th>
+                            <th colspan="5" class="py-1 px-2 text-center border-r bg-green-50">Month-to-Date</th>
+                            <th colspan="5" class="py-1 px-2 text-center bg-orange-50">Year-to-Date</th>
+                        </tr>
+                        <tr class="border-b bg-white/70 text-xs">
+                            <th class="py-1 px-1 text-right">Buy (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right">Sell (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right border-r">Net (MB)</th>
+                            <th class="py-1 px-1 text-right">Buy (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right">Sell (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right border-r">Net (MB)</th>
+                            <th class="py-1 px-1 text-right">Buy (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right">Sell (MB)</th>
+                            <th class="py-1 px-1 text-right">%</th>
+                            <th class="py-1 px-1 text-right">Net (MB)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="investor-tbody">
+                        <!-- Investor data will be populated here -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+
+        <!-- Main Portfolio Table -->
+        <div class="overflow-x-auto rounded-2xl shadow bg-white/80">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b bg-white/70">
+                        <th class="py-2 px-3 text-left sortable" data-key="symbol">
+                            <span class="inline-flex items-center gap-1">
+                                Symbol
+                                <span class="text-xs opacity-30" id="sort-symbol">↕</span>
+                            </span>
+                        </th>
+                        <th class="py-2 px-3 text-left">Sector</th>
+                        <th class="py-2 px-3 text-right sortable" data-key="close">
+                            <span class="inline-flex items-center gap-1">
+                                ราคาปิด
+                                <span class="text-xs opacity-30" id="sort-close">↕</span>
+                            </span>
+                        </th>
+                        <th class="py-2 px-3 text-right sortable" data-key="nvdr">
+                            <span class="inline-flex items-center gap-1">
+                                NVDR (M.Baht)
+                                <span class="text-xs opacity-30" id="sort-nvdr">↕</span>
+                            </span>
+                        </th>
+                        <th class="py-2 px-3 text-right sortable" data-key="shortMB">
+                            <span class="inline-flex items-center gap-1">
+                                Short Sales (M.Baht)
+                                <span class="text-xs opacity-30" id="sort-shortMB">↕</span>
+                            </span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody id="portfolio-tbody">
+                    <!-- Portfolio data will be populated here -->
+                </tbody>
+            </table>
+            
+            <!-- Loading state -->
+            <div id="loading-state" class="py-12 text-center text-slate-500">
+                <div class="loading">Loading portfolio data...</div>
+            </div>
+            
+            <!-- Empty state -->
+            <div id="empty-state" class="py-12 text-center text-slate-500" style="display: none;">
+                No portfolio data available. Please check your database connection.
+            </div>
+        </div>
+
+        <footer class="text-[11px] opacity-60">
+            Real-time data from SET database. Last updated: <span id="last-updated">Loading...</span>
+        </footer>
+    </div>
+
+    <script>
+        // Global state
+        let portfolioData = [];
+        let originalData = [];
+        let sortKey = 'symbol';
+        let sortDir = 'asc';
+        let searchQuery = '';
+
+        // Utility functions
+        function fmt(n, frac = 2) {
+            if (n == null || !Number.isFinite(n)) return '';
+            return n.toLocaleString(undefined, { maximumFractionDigits: frac });
+        }
+
+        function fmtPct(n, frac = 2) {
+            if (n == null || !Number.isFinite(n)) return '';
+            return `${n.toFixed(frac)}%`;
+        }
+
+        function csvEscape(s) {
+            return `"${s.replaceAll('"', '""')}"`;
+        }
+
+        function formatNumber(value, millions = false) {
+            if (value === null || value === undefined || isNaN(value)) return '';
+            if (millions && Math.abs(value) >= 1) {
+                return fmt(value, 2);
+            }
+            return fmt(value, 2);
+        }
+
+        function getValueClass(value) {
+            if (value > 0) return 'positive';
+            if (value < 0) return 'negative';
+            return '';
+        }
+
+        // API functions
+        async function fetchDashboardData() {
+            try {
+                const response = await fetch('/api/portfolio/dashboard');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching dashboard data:', error);
+                return null;
+            }
+        }
+
+        async function fetchSummaryData() {
+            try {
+                const response = await fetch('/api/portfolio/summary');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching summary data:', error);
+                return null;
+            }
+        }
+
+        // Render functions
+        function renderSummaryCards(summaryData) {
+            const container = document.getElementById('summary-cards');
+            if (!summaryData || summaryData.error) {
+                container.innerHTML = '<div class="col-span-4 text-center text-slate-500">No summary data available</div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <div class="rounded-2xl bg-white/80 p-4 shadow">
+                    <div class="text-xs opacity-60">Total Symbols</div>
+                    <div class="text-xl font-semibold table-cell">${summaryData.total_symbols || 0}</div>
+                    <div class="text-xs opacity-50">stocks</div>
+                </div>
+                <div class="rounded-2xl bg-white/80 p-4 shadow">
+                    <div class="text-xs opacity-60">Avg Price</div>
+                    <div class="text-xl font-semibold table-cell">${formatNumber(summaryData.avg_price)}</div>
+                    <div class="text-xs opacity-50">Baht</div>
+                </div>
+                <div class="rounded-2xl bg-white/80 p-4 shadow">
+                    <div class="text-xs opacity-60">NVDR (Σ)</div>
+                    <div class="text-xl font-semibold table-cell ${getValueClass(summaryData.total_nvdr_mb)}">${formatNumber(summaryData.total_nvdr_mb, true)}</div>
+                    <div class="text-xs opacity-50">M.Baht</div>
+                </div>
+                <div class="rounded-2xl bg-white/80 p-4 shadow">
+                    <div class="text-xs opacity-60">Short Sales (Σ)</div>
+                    <div class="text-xl font-semibold table-cell ${getValueClass(-summaryData.total_short_mb)}">${formatNumber(summaryData.total_short_mb, true)}</div>
+                    <div class="text-xs opacity-50">M.Baht</div>
+                </div>
+            `;
+        }
+
+        function renderInvestorSummary(investorData) {
+            const section = document.getElementById('investor-section');
+            const tbody = document.getElementById('investor-tbody');
+
+            if (!investorData || investorData.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+
+            // Group by investor type (in case there are duplicates, take the latest)
+            const groupedData = {};
+            investorData.forEach(item => {
+                groupedData[item.investor_type] = item;
+            });
+
+            section.style.display = 'block';
+            tbody.innerHTML = Object.values(groupedData).map(investor => `
+                <tr class="border-b last:border-b-0 hover:bg-slate-50">
+                    <td class="py-2 px-2 font-medium text-sm border-r">${investor.investor_type || ''}</td>
+                    
+                    <!-- Period 1 -->
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period1_buy_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period1_buy_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period1_sell_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period1_sell_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs border-r ${getValueClass(investor.period1_net_value)}">${formatNumber(investor.period1_net_value, true)}</td>
+                    
+                    <!-- Period 2 -->
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period2_buy_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period2_buy_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period2_sell_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period2_sell_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs border-r ${getValueClass(investor.period2_net_value)}">${formatNumber(investor.period2_net_value, true)}</td>
+                    
+                    <!-- Period 3 -->
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period3_buy_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period3_buy_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period3_sell_value, true)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs">${formatNumber(investor.period3_sell_percent)}</td>
+                    <td class="py-1 px-1 text-right table-cell text-xs ${getValueClass(investor.period3_net_value)}">${formatNumber(investor.period3_net_value, true)}</td>
+                </tr>
+            `).join('');
+        }
+
+
+        function renderPortfolioTable(data) {
+            const tbody = document.getElementById('portfolio-tbody');
+            const loadingState = document.getElementById('loading-state');
+            const emptyState = document.getElementById('empty-state');
+
+            loadingState.style.display = 'none';
+
+            if (!data || data.length === 0) {
+                emptyState.style.display = 'block';
+                tbody.innerHTML = '';
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            tbody.innerHTML = data.map(stock => `
+                <tr class="border-b last:border-b-0 hover:bg-slate-50">
+                    <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
+                    <td class="py-2 px-3 text-sm opacity-70">${stock.sector || ''}</td>
+                    <td class="py-2 px-3 text-right table-cell">${formatNumber(stock.close)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.nvdr)}">${formatNumber(stock.nvdr)}</td>
+                    <td class="py-2 px-3 text-right table-cell ${getValueClass(-stock.shortMB)}">${formatNumber(stock.shortMB)}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Sorting and filtering
+        function filterAndSort() {
+            let filtered = originalData.filter(stock => 
+                !searchQuery || stock.symbol.toLowerCase().includes(searchQuery.toLowerCase())
+            );
+
+            filtered.sort((a, b) => {
+                const va = a[sortKey];
+                const vb = b[sortKey];
+                
+                if (va == null && vb == null) return 0;
+                if (va == null) return sortDir === 'asc' ? -1 : 1;
+                if (vb == null) return sortDir === 'asc' ? 1 : -1;
+                
+                if (va < vb) return sortDir === 'asc' ? -1 : 1;
+                if (va > vb) return sortDir === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            portfolioData = filtered;
+            renderPortfolioTable(portfolioData);
+        }
+
+        function updateSortIndicators() {
+            document.querySelectorAll('[id^="sort-"]').forEach(el => {
+                el.textContent = '↕';
+                el.className = 'text-xs opacity-30';
+            });
+
+            const sortEl = document.getElementById(`sort-${sortKey}`);
+            if (sortEl) {
+                sortEl.textContent = sortDir === 'asc' ? '▲' : '▼';
+                sortEl.className = 'text-xs opacity-80';
+            }
+        }
+
+        function toggleSort(key) {
+            if (key === sortKey) {
+                sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortKey = key;
+                sortDir = 'asc';
+            }
+            updateSortIndicators();
+            filterAndSort();
+        }
+
+        // Export functionality
+        function exportCSV() {
+            const headers = ['Symbol', 'Sector', 'ราคาปิด (Baht)', 'NVDR (M.Baht)', 'Short Sales (M.Baht)'];
+            const lines = [headers.map(csvEscape).join(',')];
+            
+            portfolioData.forEach(stock => {
+                lines.push([
+                    csvEscape(stock.symbol || ''),
+                    csvEscape(stock.sector || ''),
+                    String(stock.close || 0),
+                    String(stock.nvdr || 0),
+                    String(stock.shortMB || 0)
+                ].join(','));
+            });
+
+            const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `portfolio-nvdr-short-${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize the dashboard
+        async function initDashboard() {
+            try {
+                const [dashboardData, summaryData] = await Promise.all([
+                    fetchDashboardData(),
+                    fetchSummaryData()
+                ]);
+
+                if (dashboardData) {
+                    originalData = dashboardData.portfolio_stocks || [];
+                    portfolioData = [...originalData];
+                    
+                    // Update trade date
+                    const tradeDateEl = document.getElementById('trade-date');
+                    const lastUpdatedEl = document.getElementById('last-updated');
+                    if (dashboardData.trade_date) {
+                        tradeDateEl.textContent = `Trade Date: ${dashboardData.trade_date}`;
+                        lastUpdatedEl.textContent = new Date().toLocaleString();
+                    }
+
+                    // Render all sections
+                    renderSummaryCards(summaryData);
+                    renderInvestorSummary(dashboardData.investor_summary);
+                    renderPortfolioTable(portfolioData);
+                    updateSortIndicators();
+                } else {
+                    document.getElementById('empty-state').style.display = 'block';
+                    document.getElementById('loading-state').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('Error initializing dashboard:', error);
+                document.getElementById('empty-state').style.display = 'block';
+                document.getElementById('loading-state').style.display = 'none';
+            }
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            initDashboard();
+
+            // Search functionality
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                searchQuery = e.target.value;
+                filterAndSort();
+            });
+
+            // Sort functionality
+            document.querySelectorAll('.sortable').forEach(el => {
+                el.addEventListener('click', () => {
+                    toggleSort(el.dataset.key);
+                });
+            });
+
+            // Export functionality
+            document.getElementById('export-btn').addEventListener('click', exportCSV);
+
+            // Refresh functionality
+            document.getElementById('refresh-btn').addEventListener('click', () => {
+                document.getElementById('loading-state').style.display = 'block';
+                document.getElementById('empty-state').style.display = 'none';
+                document.getElementById('portfolio-tbody').innerHTML = '';
+                initDashboard();
+            });
+        });
+    </script>
+</body>
+</html>
