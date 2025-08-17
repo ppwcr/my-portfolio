@@ -1492,14 +1492,6 @@
             updateSortIndicators();
         }
 
-                // This is handled in the initDashboard function above
-            } catch (error) {
-                console.error('Error initializing dashboard:', error);
-                document.getElementById('empty-state').style.display = 'block';
-                document.getElementById('loading-state').style.display = 'none';
-            }
-        }
-
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             if (progressEventSource) {
