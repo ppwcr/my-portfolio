@@ -41,6 +41,11 @@ if errorlevel 1 (
 echo.
 echo Starting server...
 echo.
+echo Opening browser in 3 seconds...
+timeout /t 3 /nobreak >nul
+
+REM Start the server in background and open browser
+start "" http://127.0.0.1:8000/portfolio
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 pause
