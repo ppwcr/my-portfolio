@@ -921,11 +921,11 @@
                 </tr>
             `).join('');
             
-            // Create mini charts for all symbols (simple approach)
+            // Create mini charts for all symbols with longer delays to prevent server overload
             sortedData.forEach((stock, index) => {
                 setTimeout(() => {
                     createMiniChart(stock.symbol);
-                }, index * 300); // 300ms delay between each chart to prevent rate limiting
+                }, index * 1000); // 1 second delay between each chart to prevent server overload
             });
         }
 
@@ -1094,6 +1094,22 @@
 
                 if (!response.ok) {
                     console.warn(`Failed to fetch chart data for ${symbol}: ${response.status}`);
+                    
+                    // Special handling for 503 errors (server overload)
+                    if (response.status === 503) {
+                        if (retryCount < 3) {
+                            // Show retry indicator with longer delay for 503 errors
+                            loading.textContent = retryCount === 0 ? '↻' : retryCount === 1 ? '↻↻' : '↻↻↻';
+                            // Retry after 2-4 seconds for 503 errors to give server time to recover
+                            const delay = 2000 + (retryCount * 1000); // 2s, 3s, 4s
+                            setTimeout(() => createMiniChart(symbol, retryCount + 1), delay);
+                            return;
+                        }
+                        loading.textContent = '⚠️';
+                        return;
+                    }
+                    
+                    // For other errors, use normal retry logic
                     if (retryCount < 2) {
                         // Show retry indicator
                         loading.textContent = retryCount === 0 ? '↻' : '↻↻';
