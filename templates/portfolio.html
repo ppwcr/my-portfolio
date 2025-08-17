@@ -510,8 +510,13 @@
             const { status, step, progress, message, details } = progressData;
             
             if (status === 'completed') {
-                showStatus('✅', 'Database update completed', message, 'success');
-                autoHideStatus(5000);
+                if (step === 'partial') {
+                    showStatus('⚠️', 'Database update - Partial Success', message, 'warning');
+                    autoHideStatus(10000); // Show longer for partial success
+                } else {
+                    showStatus('✅', 'Database update completed', message, 'success');
+                    autoHideStatus(5000);
+                }
                 return;
             }
             
@@ -1287,7 +1292,16 @@
                     const err = await res.json().catch(() => ({}));
                     throw new Error(err.detail?.message || err.detail?.error || 'Update failed');
                 }
-                return await res.json();
+                const result = await res.json();
+                
+                // Log detailed results for debugging
+                console.log('Database save result:', result);
+                if (result.failed_components && result.failed_components.length > 0) {
+                    console.warn('Failed components:', result.failed_components);
+                    console.warn('Summary:', result.summary);
+                }
+                
+                return result;
             } catch (e) {
                 console.error('Update error:', e);
                 const box = document.getElementById('db-progress');

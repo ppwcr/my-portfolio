@@ -966,20 +966,43 @@ async def save_to_database():
         else:
             update_progress("running", "shortsales_skipped", 98, "No Short Sales files found")
         
-        # Final results
+        # Final results with detailed analysis
         sector_success = all(results["sector_data"].values()) if results["sector_data"] else False
         total_success = results["investor_data"] and sector_success and results["nvdr_data"] and results["short_sales_data"]
         
+        # Create detailed success/failure summary
+        success_summary = {
+            "investor_data": results["investor_data"],
+            "sector_data": f"{sum(results['sector_data'].values())} of {len(results['sector_data'])} sectors" if results["sector_data"] else "No sectors",
+            "nvdr_data": results["nvdr_data"],
+            "short_sales_data": results["short_sales_data"]
+        }
+        
+        failed_components = []
+        if not results["investor_data"]:
+            failed_components.append("investor data")
+        if not sector_success:
+            failed_sectors = [k for k, v in results["sector_data"].items() if not v] if results["sector_data"] else ["all sectors"]
+            failed_components.append(f"sector data ({', '.join(failed_sectors)})")
+        if not results["nvdr_data"]:
+            failed_components.append("NVDR data")
+        if not results["short_sales_data"]:
+            failed_components.append("short sales data")
+        
         if total_success:
-            update_progress("completed", "success", 100, "Database update complete")
+            message = "✅ All data saved successfully"
+            update_progress("completed", "success", 100, message)
         else:
-            update_progress("completed", "partial", 100, "Partial success")
+            message = f"⚠️ Partial success - Failed: {', '.join(failed_components)}"
+            update_progress("completed", "partial", 100, message)
         
         return {
             "success": total_success,
             "updated": True,
-            "message": "Data saved to database" if total_success else "Partial success",
+            "message": message,
             "details": results,
+            "summary": success_summary,
+            "failed_components": failed_components,
             "trade_date": trade_date.isoformat() if trade_date else None
         }
         
