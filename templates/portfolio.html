@@ -512,7 +512,7 @@
             if (status === 'completed') {
                 if (step === 'partial') {
                     showStatus('⚠️', 'Database update - Partial Success', message, 'warning');
-                    autoHideStatus(10000); // Show longer for partial success
+                    // Do NOT auto-hide for partial success - keep warning visible until next update
                 } else {
                     showStatus('✅', 'Database update completed', message, 'success');
                     autoHideStatus(5000);
@@ -522,7 +522,7 @@
             
             if (status === 'error') {
                 showStatus('❌', 'Database update failed', message, 'error');
-                autoHideStatus(10000);
+                // Do NOT auto-hide for errors - keep error visible until next update
                 return;
             }
             
@@ -630,12 +630,12 @@
                     }
                 } else {
                     showStatus('⚠️', 'Database update completed with warnings', result.message, 'warning');
-                    autoHideStatus(10000);
+                    // Do NOT auto-hide - keep warning visible until next update
                 }
             } catch (error) {
                 console.error('Auto-update error:', error);
                 showStatus('❌', 'Database update failed', `Error: ${error.message}`, 'error');
-                autoHideStatus(10000);
+                // Do NOT auto-hide - keep error visible until next update
             }
         }
 
@@ -1668,7 +1668,7 @@
                 } catch (err) {
                     console.error('Manual database update failed:', err);
                     showStatus('❌', 'Database update failed', err.message || 'Please check console for details', 'error');
-                    autoHideStatus(10000);
+                    // Do NOT auto-hide - keep error visible until next update
                 } finally {
                     btn.disabled = false;
                     btn.textContent = originalText;
