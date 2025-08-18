@@ -2,21 +2,16 @@
   "version": 2,
   "builds": [
     {
-      "src": "main_vercel.py",
+      "src": "main_vercel_clean.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "main_vercel.py"
+      "dest": "main_vercel_clean.py"
     }
   ],
-  "functions": {
-    "main_vercel.py": {
-      "maxDuration": 300
-    }
-  },
   "env": {
     "PYTHONPATH": "."
   }
