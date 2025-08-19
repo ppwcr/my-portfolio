@@ -1683,9 +1683,11 @@
             }
         }
 
-        // Initialize the dashboard
+        // Initialize the dashboard (database-only for fast loading)
         async function initDashboard() {
             try {
+                console.log('🚀 Loading portfolio from database...');
+                
                 // Load existing data immediately from database
                 const [dashboardData, summaryData, setIndexData, setIndexChartData] = await Promise.all([
                     fetchDashboardData(),
@@ -1715,27 +1717,27 @@
                 // Load portfolio data for current date
                 await loadPortfolioForDate(currentPortfolioDate);
                 
-                // If no data exists, show empty state and force a full refresh
-                const needsFullRefresh = !hasData;
-                if (needsFullRefresh) {
-                    // Show empty state with loading message
-                    document.getElementById('loading-state').style.display = 'block';
-                    document.getElementById('loading-state').innerHTML = `
-                        <div class="text-center py-8">
-                            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-                            <h3 class="text-lg font-medium text-gray-900 mb-2">Setting up your portfolio...</h3>
-                            <p class="text-gray-600">Downloading market data for the first time</p>
-                            <p class="text-sm text-gray-500 mt-2">This may take 1-2 minutes</p>
-                        </div>
-                    `;
-                    showStatus('📥', 'First time setup - downloading market data...', 'This may take 1-2 minutes', 'info');
+                // Always hide loading state since server pre-loads data on startup
+                document.getElementById('loading-state').style.display = 'none';
+                
+                if (hasData) {
+                    console.log('✅ Portfolio loaded from database');
+                    showStatus('✅', 'Portfolio ready', 'Loaded from database (updated on server startup)', 'success');
+                    // Auto-hide success status after 3 seconds
+                    setTimeout(() => {
+                        const statusEl = document.getElementById('status-message');
+                        if (statusEl && statusEl.textContent.includes('Portfolio ready')) {
+                            statusEl.style.display = 'none';
+                        }
+                    }, 3000);
                 } else {
-                    // Hide loading state if we have data
-                    document.getElementById('loading-state').style.display = 'none';
+                    console.log('⚠️ No data found in database');
+                    showStatus('⚠️', 'No data available', 'Server is still loading fresh data. Please refresh page in a moment.', 'warning');
                 }
                 
-                // Start auto update in background
-                startAutoUpdate(needsFullRefresh);
+                // Skip auto-update since server already scrapes on startup
+                // Users can manually refresh if needed
+                console.log('🔄 Skipping auto-update (server pre-loads data on startup)');
                 
             } catch (error) {
                 console.error('Error initializing dashboard:', error);
