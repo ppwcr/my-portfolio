@@ -532,10 +532,13 @@ my-portfolio/
 
 ### Database Tables:
 
-* `nvdr_rows` (asof_date, symbol, buy/sell/total/net/pct…)
-* `short_sales_rows` (trading data)
-* `investor_rows` (market + label rows)
-* `sector_constituents` (slug + symbol rows)
+* **`investor_summary`** - Investor type trading data (period1/2/3 buy/sell/net values)
+* **`nvdr_trading`** - NVDR trading data (volume/value buy/sell/total/net)
+* **`short_sales_trading`** - Short sales data (short volume/value, outstanding shares)
+* **`sector_data`** - Sector constituent stocks (prices, volume, sector classification)
+* **`set_index`** - SET index data (index values, changes, volume)
+* **`portfolio_symbols`** - User portfolio symbols (watchlist)
+* **`portfolio_holdings`** - Portfolio holdings (quantity, cost price, trade date)
 
 ### Automatic Features:
 
@@ -553,6 +556,63 @@ curl -X POST http://127.0.0.1:8000/api/save-to-database
 # View update logs
 dir scraper_*.log
 ```
+
+### Detailed Table Structures:
+
+#### **investor_summary**
+- `investor_type` (str) - Type of investor (Local, Foreign, etc.)
+- `period1/2/3_buy_value` (float) - Buy values for each period
+- `period1/2/3_sell_value` (float) - Sell values for each period  
+- `period1/2/3_net_value` (float) - Net values for each period
+- `trade_date` (str) - Trading date (YYYY-MM-DD)
+- `created_at` (str) - Record creation timestamp
+
+#### **nvdr_trading**
+- `symbol` (str) - Stock symbol
+- `volume_buy/sell/total/net` (int) - Trading volumes
+- `value_buy/sell/total/net` (int) - Trading values in Baht
+- `volume_percent` (float) - Volume percentage
+- `value_percent` (float) - Value percentage
+- `trade_date` (str) - Trading date
+
+#### **short_sales_trading**
+- `symbol` (str) - Stock symbol
+- `short_volume_local/nvdr/total` (int) - Short sale volumes
+- `short_value_baht` (int) - Short sale value in Baht
+- `short_percentage` (float) - Short sale percentage
+- `outstanding_local/nvdr/total` (int) - Outstanding shares
+- `outstanding_percentage` (float) - Outstanding percentage
+- `trade_date` (str) - Trading date
+
+#### **sector_data**
+- `symbol` (str) - Stock symbol
+- `open/high/low/last_price` (float) - Price data
+- `change` (str) - Price change
+- `percent_change` (str) - Percentage change
+- `volume_shares` (int) - Trading volume
+- `value_baht` (float) - Trading value
+- `sector` (str) - Sector classification
+- `trade_date` (str) - Trading date
+
+#### **set_index**
+- `index_name` (str) - Index name (SET, MAI, etc.)
+- `last_value` (float) - Last index value
+- `change_value` (float) - Index change
+- `change_text` (str) - Change description
+- `volume_thousands` (int) - Volume in thousands
+- `value_million_baht` (float) - Value in million Baht
+- `trade_date` (str) - Trading date
+
+#### **portfolio_symbols**
+- `symbol` (str) - Stock symbol in watchlist
+- `added_at` (str) - When added to watchlist
+
+#### **portfolio_holdings**
+- `symbol` (str) - Stock symbol
+- `quantity` (int) - Number of shares
+- `avg_cost_price` (float) - Average cost per share
+- `cost` (float) - Total cost
+- `trade_date` (str) - Trade date
 
 ---
 
