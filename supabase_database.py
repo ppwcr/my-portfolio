@@ -117,6 +117,27 @@ class ProperDatabaseManager:
             
             print(f"📊 Processing NVDR data: {df.shape}")
             
+            # Extract actual trade date from Excel file
+            actual_trade_date = trade_date
+            for idx, row in df.iterrows():
+                for cell in row:
+                    if pd.notna(cell) and 'As of' in str(cell):
+                        # Extract date from "As of 15 Aug 2025" format
+                        import re
+                        date_match = re.search(r'As of (\d{1,2} \w+ \d{4})', str(cell))
+                        if date_match:
+                            try:
+                                import datetime as dt
+                                actual_trade_date = dt.datetime.strptime(date_match.group(1), "%d %b %Y").date()
+                                print(f"📅 Found actual trade date in Excel: {actual_trade_date}")
+                                break
+                            except:
+                                pass
+                if actual_trade_date != trade_date:
+                    break
+                if idx > 5:  # Only check first few rows
+                    break
+            
             # Find data starting point (look for 'Symbol' row)
             data_start_row = None
             for idx, row in df.iterrows():
@@ -154,7 +175,7 @@ class ProperDatabaseManager:
                     'value_net': self._parse_integer(row.iloc[9]) if len(row) > 9 else None,
                     'value_percent': self._parse_number(row.iloc[10]) if len(row) > 10 else None,
                     
-                    'trade_date': trade_date.isoformat() if trade_date else None,
+                    'trade_date': actual_trade_date.isoformat() if actual_trade_date else None,
                     'created_at': datetime.now().isoformat()
                 }
                 records.append(record)
@@ -186,6 +207,46 @@ class ProperDatabaseManager:
             
             print(f"📊 Processing Short Sales data: {df.shape}")
             
+            # Extract actual trade date from Excel file
+            actual_trade_date = trade_date
+            for idx, row in df.iterrows():
+                for cell in row:
+                    if pd.notna(cell):
+                        cell_str = str(cell)
+                        # Check for English format: "As of 15 Aug 2025"
+                        if 'As of' in cell_str:
+                            import re
+                            date_match = re.search(r'As of (\d{1,2} \w+ \d{4})', cell_str)
+                            if date_match:
+                                try:
+                                    import datetime as dt
+                                    actual_trade_date = dt.datetime.strptime(date_match.group(1), "%d %b %Y").date()
+                                    print(f"📅 Found actual trade date in Short Sales Excel: {actual_trade_date}")
+                                    break
+                                except:
+                                    pass
+                        # Check for Thai format: "15 ส.ค. 2568" (Buddhist year)
+                        elif 'ส.ค.' in cell_str or 'วันที่' in cell_str:
+                            import re
+                            date_match = re.search(r'(\d{1,2})\s*ส\.ค\.\s*(\d{4})', cell_str)
+                            if date_match:
+                                try:
+                                    day = int(date_match.group(1))
+                                    buddhist_year = int(date_match.group(2))
+                                    # Convert Buddhist year to Gregorian year
+                                    gregorian_year = buddhist_year - 543
+                                    # August is month 8
+                                    import datetime as dt
+                                    actual_trade_date = dt.date(gregorian_year, 8, day)
+                                    print(f"📅 Found actual trade date in Short Sales Excel (Thai): {actual_trade_date}")
+                                    break
+                                except:
+                                    pass
+                if actual_trade_date != trade_date:
+                    break
+                if idx > 10:  # Check more rows for Thai format
+                    break
+            
             # Find stock symbol rows (exclude Thai headers)
             records = []
             for idx, row in df.iterrows():
@@ -215,7 +276,7 @@ class ProperDatabaseManager:
                         'outstanding_total': self._parse_integer(row.iloc[8]) if len(row) > 8 else None,
                         'outstanding_percentage': self._parse_number(row.iloc[9]) if len(row) > 9 else None,
                         
-                        'trade_date': trade_date.isoformat() if trade_date else None,
+                        'trade_date': actual_trade_date.isoformat() if actual_trade_date else None,
                         'created_at': datetime.now().isoformat()
                     }
                     records.append(record)
@@ -444,10 +505,12 @@ class ProperDatabaseManager:
             return {"status": "error", "data": [], "trade_date": None, "error": str(e)}
     
     def is_set_index_data_fresh(self) -> bool:
-        """Check if SET index data exists for today"""
+        """Check if SET index data exists (any recent data available)"""
         try:
-            today = datetime.now().date()
-            result = self.client.table('set_index').select('trade_date').eq('trade_date', today.isoformat()).limit(1).execute()
+            # Check if we have any data in the last 7 days
+            from datetime import timedelta
+            cutoff_date = (datetime.now().date() - timedelta(days=7)).isoformat()
+            result = self.client.table('set_index').select('trade_date').gte('trade_date', cutoff_date).limit(1).execute()
             return len(result.data) > 0
         except Exception as e:
             print(f"❌ Error checking SET index data freshness: {str(e)}")
@@ -529,6 +592,99 @@ class ProperDatabaseManager:
         except Exception as e:
             print(f"❌ Error finding missing sector symbols: {e}")
             return []
+    
+    def save_portfolio_holding(self, symbol: str, quantity: int, avg_cost_price: float, trade_date: date) -> bool:
+        """Save or update a portfolio holding for a specific date"""
+        try:
+            # Check if holding already exists for this symbol and date
+            existing = self.client.table('portfolio_holdings').select('*').eq('symbol', symbol.upper().strip()).eq('trade_date', trade_date.isoformat()).execute()
+            
+            record = {
+                'symbol': symbol.upper().strip(),
+                'quantity': quantity,
+                'avg_cost_price': avg_cost_price,
+                'cost': quantity * avg_cost_price,
+                'trade_date': trade_date.isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            if existing.data:
+                # Update existing holding
+                result = self.client.table('portfolio_holdings').update(record).eq('symbol', symbol.upper().strip()).eq('trade_date', trade_date.isoformat()).execute()
+                print(f"✅ Updated portfolio holding: {symbol}")
+            else:
+                # Insert new holding
+                record['created_at'] = datetime.now().isoformat()
+                result = self.client.table('portfolio_holdings').insert(record).execute()
+                print(f"✅ Added new portfolio holding: {symbol}")
+            
+            return True
+            
+        except Exception as e:
+            error_msg = str(e)
+            if 'relation "public.portfolio_holdings" does not exist' in error_msg or 'table "portfolio_holdings" does not exist' in error_msg:
+                print(f"❌ Portfolio holdings table doesn't exist. Please create 'portfolio_holdings' table in Supabase.")
+                print("   SQL: CREATE TABLE portfolio_holdings (")
+                print("     id SERIAL PRIMARY KEY,")
+                print("     symbol TEXT NOT NULL,")
+                print("     quantity INTEGER NOT NULL,")
+                print("     avg_cost_price NUMERIC(10,2) NOT NULL,")
+                print("     cost NUMERIC(15,2) NOT NULL,")
+                print("     trade_date DATE NOT NULL,")
+                print("     created_at TIMESTAMPTZ DEFAULT NOW(),")
+                print("     updated_at TIMESTAMPTZ DEFAULT NOW(),")
+                print("     UNIQUE(symbol, trade_date)")
+                print("   );")
+            else:
+                print(f"❌ Error saving portfolio holding: {e}")
+            return False
+    
+    def get_portfolio_holdings(self, trade_date: date) -> dict:
+        """Get portfolio holdings for a specific date"""
+        try:
+            result = self.client.table('portfolio_holdings').select('*').eq('trade_date', trade_date.isoformat()).order('symbol', desc=False).execute()
+            
+            holdings = {}
+            if result.data:
+                for holding in result.data:
+                    holdings[holding['symbol']] = {
+                        'quantity': holding['quantity'],
+                        'avg_cost_price': holding['avg_cost_price'],
+                        'cost': holding['cost']
+                    }
+            
+            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date}")
+            return holdings
+            
+        except Exception as e:
+            print(f"❌ Error retrieving portfolio holdings: {e}")
+            return {}
+    
+    def get_available_portfolio_dates(self) -> list:
+        """Get all available dates that have portfolio holdings"""
+        try:
+            result = self.client.table('portfolio_holdings').select('trade_date').order('trade_date', desc=True).execute()
+            
+            dates = list(set(item['trade_date'] for item in result.data)) if result.data else []
+            dates.sort(reverse=True)  # Most recent first
+            
+            print(f"📅 Found {len(dates)} dates with portfolio holdings")
+            return dates
+            
+        except Exception as e:
+            print(f"❌ Error retrieving portfolio dates: {e}")
+            return []
+    
+    def delete_portfolio_holding(self, symbol: str, trade_date: date) -> bool:
+        """Delete a portfolio holding for a specific symbol and date"""
+        try:
+            result = self.client.table('portfolio_holdings').delete().eq('symbol', symbol.upper().strip()).eq('trade_date', trade_date.isoformat()).execute()
+            print(f"✅ Deleted portfolio holding: {symbol} for {trade_date}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error deleting portfolio holding: {e}")
+            return False
 
 
 def get_proper_db():

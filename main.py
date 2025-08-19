@@ -27,6 +27,7 @@ from fastapi.responses import Response
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # Import background updater
@@ -56,6 +57,15 @@ yfinance_lock = threading.Lock()
 
 # Initialize FastAPI app
 app = FastAPI(title="SET Data Export API", version="1.0.0")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -2150,5 +2160,200 @@ async def update_symbol_data(symbol: str):
         raise HTTPException(status_code=500, detail=f"Error updating symbol data: {str(e)}")
 
 
+@app.get("/api/portfolio/available-dates")
+async def get_available_portfolio_dates():
+    """Get all available dates that have portfolio holdings"""
+    try:
+        db = get_proper_db()
+        dates = db.get_available_portfolio_dates()
+        
+        # If no dates, add today as default
+        if not dates:
+            today = datetime.now().date().isoformat()
+            dates = [today]
+        
+        return JSONResponse(content={
+            "success": True,
+            "dates": dates
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting available dates: {str(e)}")
+
+
+@app.get("/api/portfolio/holdings")
+async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
+    """Get portfolio holdings for a specific date"""
+    try:
+        from datetime import datetime
+        
+        # Parse the date
+        try:
+            parsed_date = datetime.strptime(trade_date, '%Y-%m-%d').date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        db = get_proper_db()
+        
+        # Get portfolio holdings for the date
+        holdings = db.get_portfolio_holdings(parsed_date)
+        
+        # Get latest market data for calculations
+        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+        latest_market_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        
+        # Get current prices and portfolio symbols
+        portfolio_symbols = db.get_portfolio_symbols()
+        portfolio_data = []
+        
+        if latest_market_date:
+            # Get market data for all portfolio symbols
+            for symbol in portfolio_symbols:
+                # Get stock data
+                stock_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                stock_data = stock_result.data[0] if stock_result.data else {}
+                
+                # Get NVDR data
+                nvdr_result = db.client.table('nvdr_trading').select('value_net').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                nvdr_value = nvdr_result.data[0]['value_net'] if nvdr_result.data else 0
+                
+                # Get Short Sales data
+                short_result = db.client.table('short_sales_trading').select('short_value_baht').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                short_value = short_result.data[0]['short_value_baht'] if short_result.data else 0
+                
+                # Get holding data for this symbol and date
+                holding = holdings.get(symbol, {})
+                
+                # Parse values safely
+                def parse_change(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        cleaned = str(value).replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                change_str = stock_data.get('change', '')
+                percent_change_str = stock_data.get('percent_change', '')
+                close_price = stock_data.get('last_price', 0) or 0
+                
+                # Calculate P/L if we have holding data
+                quantity = holding.get('quantity', 0)
+                avg_cost_price = holding.get('avg_cost_price', 0)
+                cost = holding.get('cost', 0)
+                
+                market_value = quantity * close_price if quantity and close_price else 0
+                pl_amount = market_value - cost if cost else 0
+                pl_percent = (pl_amount / cost * 100) if cost and cost > 0 else 0
+                
+                portfolio_data.append({
+                    'symbol': symbol,
+                    'sector': stock_data.get('sector', ''),
+                    'quantity': quantity,
+                    'avg_cost_price': avg_cost_price,
+                    'cost': cost,
+                    'change': parse_change(change_str),
+                    'close': close_price,
+                    'percent_change': parse_change(percent_change_str.replace('%', '')),
+                    'market_value': market_value,
+                    'pl_amount': pl_amount,
+                    'pl_percent': pl_percent,
+                    'nvdr': nvdr_value or 0,
+                    'shortBaht': short_value or 0
+                })
+        
+        return JSONResponse(content={
+            "success": True,
+            "trade_date": trade_date,
+            "portfolio_data": portfolio_data,
+            "market_date": latest_market_date
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting portfolio holdings: {str(e)}")
+
+
+@app.post("/api/portfolio/save-holding")
+async def save_portfolio_holding(request: Request):
+    """Save or update a portfolio holding"""
+    try:
+        data = await request.json()
+        symbol = data.get('symbol', '').strip().upper()
+        quantity = data.get('quantity', 0)
+        avg_cost_price = data.get('avg_cost_price', 0)
+        trade_date_str = data.get('trade_date', '')
+        
+        if not symbol:
+            raise HTTPException(status_code=400, detail="Symbol is required")
+        
+        if not trade_date_str:
+            raise HTTPException(status_code=400, detail="Trade date is required")
+        
+        try:
+            trade_date = datetime.strptime(trade_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        if quantity < 0:
+            raise HTTPException(status_code=400, detail="Quantity must be non-negative")
+        
+        if avg_cost_price < 0:
+            raise HTTPException(status_code=400, detail="Average cost price must be non-negative")
+        
+        db = get_proper_db()
+        
+        if quantity == 0 and avg_cost_price == 0:
+            # Delete the holding only if both quantity and price are 0
+            success = db.delete_portfolio_holding(symbol, trade_date)
+        else:
+            # Save or update the holding
+            success = db.save_portfolio_holding(symbol, quantity, avg_cost_price, trade_date)
+        
+        if success:
+            return JSONResponse(content={
+                "success": True,
+                "message": f"Portfolio holding {'updated' if quantity > 0 else 'deleted'} for {symbol}"
+            })
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save portfolio holding")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        # Check if it's a table missing error and provide helpful guidance
+        if 'portfolio_holdings' in error_msg and ('does not exist' in error_msg or 'not found' in error_msg):
+            raise HTTPException(status_code=500, detail="Portfolio holdings table not found. Please create the database table first by running create_portfolio_holdings_table.sql in your Supabase SQL editor.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Error saving portfolio holding: {error_msg}")
+
+
+@app.post("/api/portfolio/setup-database")
+async def setup_portfolio_database():
+    """Helper endpoint to provide setup instructions"""
+    return JSONResponse(content={
+        "success": False,
+        "message": "Database table setup required",
+        "sql_file": "create_portfolio_holdings_table.sql",
+        "instructions": [
+            "1. Open your Supabase dashboard",
+            "2. Go to SQL Editor",
+            "3. Copy and paste the SQL from create_portfolio_holdings_table.sql",
+            "4. Run the query",
+            "5. Refresh this page and try editing again"
+        ],
+        "sql_content": "-- See create_portfolio_holdings_table.sql for complete SQL"
+    })
+
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import argparse
+    parser = argparse.ArgumentParser(description='SET Portfolio Dashboard Server')
+    parser.add_argument('--port', type=int, default=8000, help='Port to run the server on (default: 8000)')
+    parser.add_argument('--host', type=str, default="0.0.0.0", help='Host to bind to (default: 0.0.0.0)')
+    args = parser.parse_args()
+    
+    uvicorn.run(app, host=args.host, port=args.port)
