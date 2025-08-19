@@ -498,10 +498,11 @@ ssh -L 8000:127.0.0.1:8000 user@remote
 ## Project Structure
 
 ```
-set-data-export-panel/
-├─ main.py                          # FastAPI app (endpoints, optional DB save)
+my-portfolio/
+├─ main.py                          # FastAPI app (endpoints, auto DB save)
 ├─ requirements.txt
 ├─ supabase_database.py             # Supabase helpers (server-side)
+├─ background_updater.py            # Automatic data collection & updates
 ├─ templates/
 │  └─ index.html                    # Floating panel UI
 ├─ static/
@@ -510,13 +511,15 @@ set-data-export-panel/
 ├─ _out/                            # Generated files
 │  ├─ investor/
 │  └─ sectors_YYYYMMDD_HHMMSS/
-├─ download_nvdr_excel.py
-├─ download_short_sales_excel.py
-├─ scrape_investor_type_simple.py
-├─ scrape_set_sectors_jina.py
+├─ download_nvdr_excel.py           # NVDR data scraper
+├─ download_short_sales_excel.py    # Short sales data scraper
+├─ scrape_investor_data.py          # Investor data scraper
+├─ scrape_sector_data.py            # Sector data scraper
 ├─ .env.example
-├─ setup.bat                        # (optional helper)
-└─ start.bat                        # (optional helper)
+├─ setup.bat                        # One-click complete setup
+├─ start.bat                        # Manual server start
+├─ server_manager.bat               # Interactive server control
+└─ run_scheduled_scrape.bat         # Scheduled scraping script
 ```
 
 ---
@@ -524,13 +527,32 @@ set-data-export-panel/
 ## Database (Supabase) – overview
 
 * Supabase is **managed Postgres**. Use the **service role key** on the server to insert/update.
-* Typical tables:
+* **Automatic data updates** run at 10:30 AM, 1:00 PM, and 5:30 PM (weekdays)
+* **Background updater** handles all data collection and database saves automatically
 
-  * `nvdr_rows` (asof\_date, symbol, buy/sell/total/net/pct…)
-  * `short_sales_rows`
-  * `investor_rows` (market + label rows)
-  * `sector_constituents` (slug + symbol rows)
-* Your app can **upsert** on `(date, key)` to avoid duplicates.
+### Database Tables:
+
+* `nvdr_rows` (asof_date, symbol, buy/sell/total/net/pct…)
+* `short_sales_rows` (trading data)
+* `investor_rows` (market + label rows)
+* `sector_constituents` (slug + symbol rows)
+
+### Automatic Features:
+
+* **Scheduled scraping** downloads fresh data from SET website
+* **Database upserts** prevent duplicates using `(date, key)` constraints
+* **Error logging** tracks failed updates in `scraper_*.log` files
+* **Background processing** runs independently of web interface
+
+### Manual Database Updates:
+
+```bash
+# Trigger manual database update (server must be running)
+curl -X POST http://127.0.0.1:8000/api/save-to-database
+
+# View update logs
+dir scraper_*.log
+```
 
 ---
 
