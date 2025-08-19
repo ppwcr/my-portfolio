@@ -240,34 +240,33 @@ Open: **[http://localhost:8000](http://localhost:8000)**
 
 ---
 
-## 🖥️ Windows: Easiest Way (Using .bat Files)
+## 🖥️ Windows: One-Click Setup (Using .bat Files)
 
-The project includes Windows batch files for easy automation. These are the **simplest way** to use the application on Windows.
+The project includes Windows batch files for easy automation. This is the **simplest way** to use the application on Windows.
 
 ### 📁 Available .bat Files:
 
-- **`setup.bat`** (run once): Creates virtual environment, installs dependencies, and sets up Playwright
-- **`start.bat`** (every time): Starts the server and opens the app in your browser
-- **`update_database_daily.bat`** (manual): Triggers a database update (server must be running)
-- **`register_update_task.bat`** (optional, run once): Schedules automatic daily weekday updates
+- **`setup.bat`** (run once): Complete setup including auto-start and scheduled scraping
+- **`start.bat`** (manual start): Starts the server with database updates (no browser)
+- **`server_manager.bat`** (control): Interactive server management interface
 
-### 🚀 **Step-by-Step Windows Setup:**
+### 🚀 **One-Click Windows Setup:**
 
-#### **Step 1: Initial Setup (One-time)**
+#### **Step 1: Complete Setup (One-time)**
 ```bash
 # Right-click Command Prompt → "Run as administrator"
 # Navigate to your project folder
 cd C:\path\to\my-portfolio
 
-# Run the setup script
+# Run the complete setup
 setup.bat
 ```
 
 **What setup.bat does:**
-- Creates Python virtual environment (`.venv`)
-- Installs all required packages from `requirements.txt`
-- Installs Playwright and Chromium browser
-- Sets up everything needed to run the application
+- ✅ Sets up auto-start (server starts automatically on login)
+- ✅ Creates scheduled data scraping (10:30, 13:00, 17:30 weekdays)
+- ✅ Includes git update checking
+- ✅ No browser opens automatically (server only)
 
 #### **Step 2: Create Environment File**
 ```bash
@@ -284,79 +283,73 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your_service_role_key_here
 ```
 
-#### **Step 3: Start the Application**
+#### **Step 3: Access the Application**
 ```bash
-# Double-click start.bat or run in Command Prompt:
+# The server will start automatically on login
+# Or manually start with:
 start.bat
+
+# Or use server manager for control:
+server_manager.bat
 ```
 
-**What start.bat does:**
-- Activates the virtual environment
-- Opens your browser to `http://localhost:8000`
-- Starts the FastAPI server with uvicorn
+**Access the dashboard at:** [http://127.0.0.1:8000/portfolio](http://127.0.0.1:8000/portfolio)
 
-### ⏰ **Setting Up Automatic Updates:**
+### ⏰ **Automatic Features:**
 
-#### **Option A: One-Click Setup (Recommended)**
+#### **Auto-Start:**
+- Server starts automatically when you log in
+- No browser opens (server runs in background)
+- Git updates checked automatically
+
+#### **Scheduled Data Scraping:**
+- **10:30 AM** - Morning data update
+- **13:00 PM** - Afternoon data update  
+- **17:30 PM** - Evening data update
+- Runs Monday-Friday only
+### 🔧 **Server Management:**
+
+#### **Using Server Manager:**
 ```bash
-# Run as Administrator
-register_update_task.bat
+# Run the interactive server manager
+server_manager.bat
 ```
 
-**What register_update_task.bat does:**
-- Creates a Windows Scheduled Task named "SET_UpdateDatabase"
-- Runs automatically on weekdays (Monday-Friday) at 18:05 (6:05 PM)
-- Skips weekends automatically
-- Requires Administrator privileges
+**Server Manager Options:**
+- **1** - Start server in background
+- **2** - Stop server
+- **3** - Check server status
+- **4** - Restart server
+- **5** - View logs
+- **6** - Exit
 
-#### **Option B: Manual Task Creation**
-1. Open **Task Scheduler** (search in Start menu)
-2. Click **"Create Basic Task"**
-3. Name: `SET_UpdateDatabase`
-4. Trigger: **Daily** at 18:05
-5. Action: **Start a program**
-6. Program: `C:\path\to\my-portfolio\update_database_daily.bat`
-7. Check **"Run whether user is logged on or not"**
-
-### 🔄 **Manual Database Updates:**
-
-If you want to manually trigger a database update:
-
+#### **Manual Control:**
 ```bash
-# Make sure the server is running first (start.bat)
-# Then run:
-update_database_daily.bat
-```
+# Start server manually
+start.bat
 
-**What update_database_daily.bat does:**
-- Skips weekends (Saturday/Sunday)
-- Calls the API endpoint to update Supabase database
-- Logs success/failure to `update_log.txt`
+# Check if server is running
+curl http://127.0.0.1:8000
+
+# Stop server (if needed)
+taskkill /f /im python.exe
+```
 
 ### 📋 **Daily Workflow:**
 
-1. **Start the application:**
-   ```bash
-   start.bat
-   ```
-
-2. **Use the web interface:**
-   - Browser opens automatically to `http://localhost:8000`
-   - Use the floating panel to export data
-
-3. **Close when done:**
-   - Press `Ctrl+C` in the Command Prompt window
-   - Or close the Command Prompt window
+1. **Automatic:** Server starts automatically on login
+2. **Manual control:** Use `server_manager.bat` when needed
+3. **Access dashboard:** [http://127.0.0.1:8000/portfolio](http://127.0.0.1:8000/portfolio)
 
 ### ⚠️ **Important Notes:**
 
-- **Administrator Rights:** `register_update_task.bat` needs Administrator privileges
-- **Server Must Be Running:** Automatic updates only work if the server is running
+- **Administrator Rights:** `setup.bat` needs Administrator privileges for scheduled tasks
+- **Auto-start:** Server runs automatically in background
 - **Python Required:** Make sure Python 3.10+ is installed
 - **Environment File:** Don't forget to create your `.env` file
-- **Weekend Skip:** Automatic updates skip Saturdays and Sundays
+- **Weekend Skip:** Scheduled scraping runs Monday-Friday only
 
-### 🔧 **Troubleshooting Windows .bat Files:**
+### 🔧 **Troubleshooting:**
 
 **If setup.bat fails:**
 ```bash
@@ -367,28 +360,57 @@ python --version
 # Then run setup.bat again
 ```
 
-**If start.bat doesn't work:**
+**If server doesn't start automatically:**
 ```bash
-# Check if virtual environment exists
-dir .venv
+# Check auto-start shortcut
+# Press Win+R, type "shell:startup" and press Enter
+# Look for "Portfolio Dashboard Server.lnk"
 
-# If missing, run setup.bat again
-setup.bat
+# Or manually start:
+start.bat
 ```
 
-**If automatic updates don't work:**
+**If scheduled tasks don't work:**
 ```bash
-# Check if task was created
-schtasks /query /tn SET_UpdateDatabase
+# Check if tasks were created
+schtasks /query /tn SET_Scraper_1030
+schtasks /query /tn SET_Scraper_1300
+schtasks /query /tn SET_Scraper_1730
 
-# Check if server is running
-curl http://localhost:8000
+# Check server status
+curl http://127.0.0.1:8000
 
-# Check update logs
-type update_log.txt
+# View scraping logs
+dir scraper_*.log
 ```
 
 **If you get permission errors:**
+```bash
+# Right-click Command Prompt and "Run as Administrator"
+# Then run setup.bat again
+```
+
+### 🗑️ **Removing the Setup:**
+
+**To remove auto-start:**
+```bash
+# Press Win+R, type "shell:startup" and press Enter
+# Delete "Portfolio Dashboard Server.lnk"
+```
+
+**To remove scheduled tasks:**
+```bash
+# Run as Administrator
+schtasks /Delete /TN SET_Scraper_1030 /F
+schtasks /Delete /TN SET_Scraper_1300 /F
+schtasks /Delete /TN SET_Scraper_1730 /F
+```
+
+**To remove everything:**
+```bash
+# Run setup.bat again (it will clean up and recreate)
+setup.bat
+```
 - Right-click Command Prompt → "Run as administrator"
 - Make sure you're in the correct project directory
 
@@ -401,17 +423,16 @@ setup.bat
 # Start the application
 start.bat
 
-# Manual database update (server must be running)
-update_database_daily.bat
+# Check server status
+curl http://127.0.0.1:8000
 
-# Schedule automatic updates (run as Administrator)
-register_update_task.bat
+# View scraping logs
+dir scraper_*.log
 
-# Check scheduled tasks
-schtasks /query /tn SET_UpdateDatabase
-
-# Remove scheduled task
-schtasks /delete /tn SET_UpdateDatabase /f
+# Remove scheduled tasks
+schtasks /delete /tn SET_Scraper_1030 /F
+schtasks /delete /tn SET_Scraper_1300 /F
+schtasks /delete /tn SET_Scraper_1730 /F
 ```
 
 ---
@@ -449,46 +470,7 @@ schtasks /delete /tn SET_UpdateDatabase /f
 
 ---
 
-## Daily Automation (Windows)
 
-**Keep the app running** as a background service (NSSM):
-
-```bat
-cd /d C:\path\to\project
-nssm install set_quick_export "%cd%\.venv\Scripts\uvicorn.exe" main:app --host 127.0.0.1 --port 8000
-nssm set set_quick_export AppDirectory "%cd%"
-nssm start set_quick_export
-```
-
-**Schedule daily database update** (Task Scheduler) — skips weekends
-
-```bat
-@echo off
-cd /d "%~dp0"
-
-:: Skip weekends (Saturday/Sunday)
-for /f %%D in ('powershell -NoProfile -Command "(Get-Date).DayOfWeek"') do set DOW=%%D
-if /I "%DOW%"=="Saturday" exit /b 0
-if /I "%DOW%"=="Sunday" exit /b 0
-
-set URL=http://127.0.0.1:8000
-
-:: Trigger a single consolidated update (investor, sectors, NVDR, short sales)
-curl -fsS -X POST "%URL%/api/save-to-database" -H "Content-Type: application/json" -o NUL
-
-if errorlevel 1 (
-  echo [%date% %time%] Update failed >> update_log.txt
-  exit /b 1
-) else (
-  echo [%date% %time%] Update succeeded >> update_log.txt
-)
-```
-
-Option A (one click): run `register_update_task.bat` to auto-create a weekday task (default 18:05). Edit inside to change time.
-
-Option B (manual): Create a **Basic Task** → *Start a program* → `update_database_daily.bat` at your desired time.
-
-Note: The update calls the running API at `http://127.0.0.1:8000`. Ensure the server is running at the scheduled time (use `start.bat` or run as a background service via NSSM as below).
 
 ---
 
