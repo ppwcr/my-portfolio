@@ -21,11 +21,32 @@ This is a SET (Stock Exchange of Thailand) data scraping and portfolio managemen
 
 ### Data Flow
 
-1. Web UI triggers API endpoints
-2. FastAPI runs Python scrapers as subprocess commands
-3. Scrapers save data to `_out/` directory (timestamped)
-4. Database operations read from output files and save to Supabase
-5. Real-time progress tracking via Server-Sent Events
+The application follows a **reliable background refresh** architecture:
+
+#### Server Startup (Automatic)
+1. **Server automatically runs Python scripts on startup**
+2. **Fresh data downloaded from SET website immediately**
+3. **All data saved to Supabase database before web interface is available**
+4. **Background refresh runs every 30 minutes automatically**
+
+#### Frontend Data Display (Fast & Reliable)
+1. **Portfolio dashboard loads data from database only** (never waits for scraping)
+2. **Users see current data instantly with no loading delays**
+3. **All charts, tables, and exports use database data exclusively**
+
+#### Background Data Refresh (Fully Automated)
+1. **`background_updater.py` runs Python scripts reliably**
+2. **`download_nvdr_excel.py` and `download_short_sales_excel.py` get fresh Excel files**
+3. **`scrape_investor_data.py` and `scrape_sector_data.py` get market data**
+4. **`scrape_set_index.py` gets index data**
+5. **All data automatically saved to database with proper date extraction**
+
+#### Technical Implementation
+- `background_updater.py`: Manages all scraping and database operations
+- Server startup: `@app.on_event("startup")` triggers data refresh
+- Scheduled updates: Every 30 minutes via `asyncio` task
+- Database-only frontend: No API calls to external scrapers
+- Robust error handling and logging for reliability
 
 ### Database Schema
 
