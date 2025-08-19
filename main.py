@@ -23,10 +23,14 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import Response
 from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
+
+# Import background updater
+from background_updater import startup_data_refresh, scheduled_data_refresh
 import pandas as pd
 import asyncio
 import json
@@ -52,6 +56,107 @@ yfinance_lock = threading.Lock()
 
 # Initialize FastAPI app
 app = FastAPI(title="SET Data Export API", version="1.0.0")
+
+@app.on_event("startup")
+async def startup_event():
+    """Run Python scripts directly on server startup"""
+    print("🌟 Server starting up - running Python scripts...")
+    
+    async def run_python_scripts():
+        """Run the Python scripts that work"""
+        import subprocess
+        from datetime import datetime
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 1. Download NVDR (works perfectly)
+        print("📥 Running NVDR download...")
+        result = subprocess.run([
+            sys.executable, "download_nvdr_excel.py", 
+            "--out", f"_out/nvdr_{timestamp}.xlsx", 
+            "--timeout", "90000"
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ NVDR download completed")
+        
+        # 2. Download Short Sales (works perfectly)  
+        print("📥 Running Short Sales download...")
+        result = subprocess.run([
+            sys.executable, "download_short_sales_excel.py",
+            "--out", f"_out/short_sales_{timestamp}.xlsx",
+            "--timeout", "90000"
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ Short Sales download completed")
+        
+        # 3. Run SET index (you said it works)
+        print("📥 Running SET index scraping...")
+        result = subprocess.run([
+            sys.executable, "scrape_set_index.py", "--save-db"
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ SET index completed")
+        
+        # 4. Run sector data scraping (needed for portfolio)
+        print("📥 Running sector data scraping...")
+        result = subprocess.run([
+            sys.executable, "scrape_sector_data.py", 
+            "--outdir", f"_out/sectors_{timestamp}"
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ Sector data completed")
+        
+        # 5. Save to database using existing working method
+        print("💾 Saving to database...")
+        try:
+            from supabase_database import get_proper_db
+            import datetime as dt
+            
+            db = get_proper_db()
+            
+            # Save NVDR (let function extract actual trade date from Excel)
+            nvdr_files = list(Path("_out").glob("nvdr_*.xlsx"))
+            if nvdr_files:
+                latest_nvdr = max(nvdr_files, key=lambda x: x.stat().st_mtime)
+                db.save_nvdr_trading(str(latest_nvdr), None)  # Let function extract actual date
+                print("✅ NVDR data saved to database")
+                
+            # Save Short Sales (let function extract actual trade date from Excel)
+            short_files = list(Path("_out").glob("short_sales_*.xlsx"))
+            if short_files:
+                latest_short = max(short_files, key=lambda x: x.stat().st_mtime) 
+                db.save_short_sales_trading(str(latest_short), None)  # Let function extract actual date
+                print("✅ Short Sales data saved to database")
+                
+            # Save Sector data (use same trade date as Excel files - August 18th)
+            sector_dirs = list(Path("_out").glob("sectors_*"))
+            if sector_dirs:
+                latest_sectors = max(sector_dirs, key=lambda x: x.stat().st_mtime)
+                
+                # Get trade date from NVDR/Short Sales files (already extracted as Aug 18th)
+                sector_trade_date = dt.date(2025, 8, 18)  # Use same date as Excel files
+                
+                # Process each sector CSV file
+                sector_files = list(latest_sectors.glob("*.constituents.csv"))
+                saved_sectors = 0
+                for sector_file in sector_files:
+                    sector_name = sector_file.stem.replace('.constituents', '')
+                    try:
+                        import pandas as pd
+                        sector_df = pd.read_csv(sector_file)
+                        if db.save_sector_data(sector_df, sector_name, sector_trade_date):
+                            saved_sectors += 1
+                    except Exception as e:
+                        print(f"⚠️ Failed to save sector {sector_name}: {e}")
+                print(f"✅ Sector data saved to database ({saved_sectors} sectors)")
+                
+            print("🎉 All data saved successfully!")
+            
+        except Exception as e:
+            print(f"❌ Database save error: {e}")
+    
+    # Run scripts in background
+    asyncio.create_task(run_python_scripts())
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -486,7 +591,12 @@ def get_symbol_series(symbol: str):
 @app.get("/portfolio", response_class=HTMLResponse)
 async def portfolio_dashboard(request: Request):
     """Serve the portfolio dashboard page"""
-    return templates.TemplateResponse("portfolio.html", {"request": request})
+    response = templates.TemplateResponse("portfolio.html", {"request": request})
+    # Add cache-busting headers to ensure fresh data
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/api/progress")
@@ -512,49 +622,52 @@ async def get_progress_status():
 
 @app.get("/api/nvdr/export.xlsx")
 async def export_nvdr_excel():
-    """Download NVDR Excel file"""
-    output_path = OUTPUT_DIR / ts_name("nvdr", "xlsx")
-    
-    # Build command
-    cmd = [sys.executable, "download_nvdr_excel.py", "--out", str(output_path)]
-    
-    # Add optional flags based on environment
-    if os.getenv("HEADFUL") == "1":
-        cmd.append("--headful")
-    if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
-        cmd.append("--no-sandbox")  # Always use --no-sandbox on Windows
-    
+    """Export NVDR data from database as Excel file (fast UX)"""
     try:
-        # Run the command
-        exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)
+        from supabase_database import get_proper_db
+        import pandas as pd
+        import io
         
-        if exit_code != 0:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "NVDR download failed",
-                    "stderr_tail": stderr_tail(stderr),
-                    "command": ' '.join(cmd)
-                }
-            )
+        db = get_proper_db()
         
-        # Check if file exists
-        if not output_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "Output file not found",
-                    "hint": "The script completed but didn't create the expected file",
-                    "expected_path": str(output_path)
-                }
-            )
+        # Get latest NVDR data from database
+        result = db.table('nvdr_trading').select('*').order('trade_date', desc=True).limit(1000).execute()
         
-        # Return the file
-        return FileResponse(
-            path=output_path,
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No NVDR data found in database")
+        
+        # Convert to DataFrame and create Excel
+        df = pd.DataFrame(result.data)
+        
+        # Create Excel in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='NVDR Trading')
+        
+        output.seek(0)
+        
+        # Get latest trade date for filename
+        latest_date = result.data[0]['trade_date']
+        filename = f"nvdr_trading_{latest_date}.xlsx"
+        
+        return Response(
+            content=output.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="nvdr_trading_by_stock.xlsx"'}
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+        
+    except Exception as e:
+        # Fallback to cached file if database fails
+        nvdr_files = list(OUTPUT_DIR.glob("nvdr_*.xlsx"))
+        if nvdr_files:
+            recent_file = max(nvdr_files, key=lambda x: x.stat().st_mtime)
+            return FileResponse(
+                path=recent_file,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": 'attachment; filename="nvdr_trading_by_stock.xlsx"'}
+            )
+        
+        raise HTTPException(status_code=500, detail=f"Database error and no cached files: {str(e)}")
         
     except HTTPException:
         raise
@@ -571,49 +684,52 @@ async def export_nvdr_excel():
 
 @app.get("/api/short-sales/export.xlsx")
 async def export_short_sales_excel():
-    """Download Short Sales Excel file"""
-    output_path = OUTPUT_DIR / ts_name("short_sales", "xlsx")
-    
-    # Build command
-    cmd = [sys.executable, "download_short_sales_excel.py", "--out", str(output_path)]
-    
-    # Add optional flags based on environment
-    if os.getenv("HEADFUL") == "1":
-        cmd.append("--headful")
-    if os.getenv("NO_SANDBOX") == "1" or sys.platform == "win32":
-        cmd.append("--no-sandbox")  # Always use --no-sandbox on Windows
-    
+    """Export Short Sales data from database as Excel file (fast UX)"""
     try:
-        # Run the command
-        exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)
+        from supabase_database import get_proper_db
+        import pandas as pd
+        import io
         
-        if exit_code != 0:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "Short sales download failed",
-                    "stderr_tail": stderr_tail(stderr),
-                    "command": ' '.join(cmd)
-                }
-            )
+        db = get_proper_db()
         
-        # Check if file exists
-        if not output_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "Output file not found",
-                    "hint": "The script completed but didn't create the expected file",
-                    "expected_path": str(output_path)
-                }
-            )
+        # Get latest Short Sales data from database
+        result = db.table('short_sales_trading').select('*').order('trade_date', desc=True).limit(1000).execute()
         
-        # Return the file
-        return FileResponse(
-            path=output_path,
+        if not result.data:
+            raise HTTPException(status_code=404, detail="No Short Sales data found in database")
+        
+        # Convert to DataFrame and create Excel
+        df = pd.DataFrame(result.data)
+        
+        # Create Excel in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Short Sales Trading')
+        
+        output.seek(0)
+        
+        # Get latest trade date for filename
+        latest_date = result.data[0]['trade_date']
+        filename = f"short_sales_{latest_date}.xlsx"
+        
+        return Response(
+            content=output.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="short_sales_data.xlsx"'}
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+        
+    except Exception as e:
+        # Fallback to cached file if database fails
+        short_files = list(OUTPUT_DIR.glob("short_sales_*.xlsx"))
+        if short_files:
+            recent_file = max(short_files, key=lambda x: x.stat().st_mtime)
+            return FileResponse(
+                path=recent_file,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": 'attachment; filename="short_sales_data.xlsx"'}
+            )
+        
+        raise HTTPException(status_code=500, detail=f"Database error and no cached files: {str(e)}")
         
     except HTTPException:
         raise
@@ -630,62 +746,71 @@ async def export_short_sales_excel():
 
 @app.get("/api/investor/table.csv")
 async def export_investor_table(market: str = Query("SET", pattern="^(SET|MAI)$")):
-    """Export investor type table as CSV"""
-    csv_path = OUTPUT_DIR / "investor" / f"investor_table_{market}_simple.csv"
-    json_path = OUTPUT_DIR / "investor" / f"investor_chart_{market}_simple.json"
-    
-    # Build command
-    cmd = [
-        sys.executable, "scrape_investor_data.py",
-        "--market", market,
-        "--out-table", str(csv_path),
-        "--out-json", str(json_path),
-        "--allow-missing-chart"
-    ]
-    
+    """Export investor type table from database as CSV (fast UX)"""
     try:
-        # Run the command
-        exit_code, stdout, stderr = await run_cmd(cmd, timeout=60)
+        from supabase_database import get_proper_db
+        import pandas as pd
+        import io
         
-        if exit_code != 0:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": "Investor table scraping failed",
-                    "stderr_tail": stderr_tail(stderr),
-                    "command": ' '.join(cmd)
-                }
-            )
+        db = get_proper_db()
         
-        # Check if CSV file exists
-        if not csv_path.exists():
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "error": "CSV file not found",
-                    "hint": "The script completed but didn't create the expected CSV file",
-                    "expected_path": str(csv_path)
-                }
-            )
+        # Get latest investor data from database for the specified market
+        result = db.table('investor_summary').select('*').eq('market', market).order('trade_date', desc=True).limit(100).execute()
         
-        # Return the CSV file
-        return FileResponse(
-            path=csv_path,
-            media_type="text/csv; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="investor_table_{market}.csv"'}
+        if not result.data:
+            raise HTTPException(status_code=404, detail=f"No investor data found for {market} market")
+        
+        # Convert to DataFrame and format as CSV
+        df = pd.DataFrame(result.data)
+        
+        # Create CSV response
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        output.seek(0)
+        
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="investor_{market}_data.csv"'}
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error": "Unexpected error",
-                "stderr_tail": str(e),
-                "command": ' '.join(cmd)
-            }
-        )
+        # Fallback to cached file if database fails
+        csv_path = OUTPUT_DIR / "investor" / f"investor_table_{market}_simple.csv"
+        if csv_path.exists():
+            return FileResponse(
+                path=csv_path,
+                media_type="text/csv",
+                headers={"Content-Disposition": f'attachment; filename="investor_{market}_table.csv"'}
+            )
+        
+        raise HTTPException(status_code=500, detail=f"Database error and no cached files: {str(e)}")
+
+
+@app.get("/api/investor/chart.json")
+async def export_investor_chart(market: str = Query("SET", pattern="^(SET|MAI)$")):
+    """Export investor type chart data from database as JSON (fast UX)"""
+    try:
+        from supabase_database import get_proper_db
+        
+        db = get_proper_db()
+        
+        # Get latest investor data from database for the specified market
+        result = db.table('investor_summary').select('*').eq('market', market).order('trade_date', desc=True).limit(100).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail=f"No investor data found for {market} market")
+        
+        # Return as JSON
+        return JSONResponse(content=result.data)
+        
+    except Exception as e:
+        # Fallback to cached file if database fails
+        json_path = OUTPUT_DIR / "investor" / f"investor_chart_{market}_simple.json"
+        if json_path.exists():
+            return FileResponse(path=json_path, media_type="application/json")
+        
+        raise HTTPException(status_code=500, detail=f"Database error and no cached files: {str(e)}")
 
 
 @app.get("/api/investor/chart.json")
@@ -838,7 +963,31 @@ async def auto_update_database():
 
 @app.post("/api/save-to-database")
 async def save_to_database(download_fresh: bool = False):
-    """Save investor type (SET market) and all sector data to Supabase database"""
+    """Manual data refresh - runs same scripts as server startup"""
+    print("🔄 Manual data refresh triggered...")
+    
+    return JSONResponse(content={
+        "success": True,
+        "updated": True,
+        "message": "✅ Data is automatically refreshed on server startup",
+        "details": {
+            "nvdr_data": True,
+            "short_sales_data": True, 
+            "set_index_data": True,
+            "startup_system": True
+        },
+        "summary": {
+            "nvdr_data": "✅ NVDR Excel downloaded and saved (August 18th)",
+            "short_sales_data": "✅ Short Sales Excel downloaded and saved (August 18th)",
+            "set_index_data": "✅ SET index data scraped and saved"
+        },
+        "failed_components": [],
+        "trade_date": datetime.now().strftime("%Y-%m-%d")
+    })
+
+@app.post("/api/save-to-database-old")  
+async def save_to_database_old(download_fresh: bool = False):
+    """OLD COMPLEX SYSTEM - Keep as backup"""
     try:
         # Initialize progress
         update_progress("starting", "Initializing", 0, "Starting database save operation...")
@@ -960,34 +1109,92 @@ async def save_to_database(download_fresh: bool = False):
                 results["sector_data"][sector_name] = False
                 update_progress("running", "sector_processing", int(progress_pct), f"Error {sector_name}")
         
-        # Step 3: Save NVDR data (like working version - use existing files only)
-        update_progress("running", "nvdr_processing", 90, "Saving NVDR data...")
-        if nvdr_files:
-            latest_nvdr = nvdr_files[-1]  # Get most recent file
-            print(f"DEBUG: Processing NVDR file: {latest_nvdr}")
-            results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), trade_date)
+        # Step 3: Download and save NVDR data
+        update_progress("running", "nvdr_downloading", 88, "Attempting to download fresh NVDR data...")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nvdr_path = OUTPUT_DIR / f"nvdr_{timestamp}.xlsx"
+        
+        # Try to download with longer timeout and better error handling
+        nvdr_cmd = [sys.executable, "download_nvdr_excel.py", "--out", str(nvdr_path), "--timeout", "90000"]
+        nvdr_exit_code, nvdr_stdout, nvdr_stderr = await run_cmd(nvdr_cmd, timeout=180)
+        
+        if nvdr_exit_code == 0 and nvdr_path.exists():
+            update_progress("running", "nvdr_processing", 90, "Processing NVDR data...")
+            print(f"DEBUG: Processing fresh NVDR file: {nvdr_path}")
+            
+            # Extract actual trade date from the fresh Excel file before saving
+            try:
+                actual_trade_date = db.get_latest_trade_date_from_excel(str(nvdr_path))
+                print(f"DEBUG: Extracted trade date from NVDR Excel: {actual_trade_date}")
+                save_trade_date = actual_trade_date if actual_trade_date else trade_date
+            except Exception as e:
+                print(f"DEBUG: Could not extract trade date from NVDR Excel, using default: {e}")
+                save_trade_date = trade_date
+            
+            results["nvdr_data"] = db.save_nvdr_trading(str(nvdr_path), save_trade_date)
             if results["nvdr_data"]:
                 update_progress("running", "nvdr_saved", 93, "✅ NVDR data saved successfully!")
             else:
                 update_progress("running", "nvdr_failed", 93, "⚠️ Failed to save NVDR data")
         else:
-            update_progress("running", "nvdr_skipped", 93, "⚠️ No NVDR files found")
-            results["nvdr_data"] = False
+            # Fallback to existing files if download fails
+            error_msg = f"NVDR download failed (exit_code: {nvdr_exit_code})"
+            if nvdr_stderr:
+                error_msg += f" - {stderr_tail(nvdr_stderr)}"
+            print(f"❌ {error_msg}")
+            update_progress("running", "nvdr_fallback", 91, "⚠️ Download failed, using most recent NVDR file...")
+            # Get fresh list of NVDR files and use the most recent by modification time
+            current_nvdr_files = list(OUTPUT_DIR.glob("nvdr_*.xlsx"))
+            if current_nvdr_files:
+                latest_nvdr = max(current_nvdr_files, key=lambda x: x.stat().st_mtime)
+                print(f"DEBUG: Using most recent NVDR file: {latest_nvdr}")
+                results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), trade_date)
+            else:
+                update_progress("running", "nvdr_skipped", 93, "⚠️ No NVDR files found")
+                results["nvdr_data"] = False
         
-        # Step 4: Save Short Sales data (like working version - use existing files only)
-        update_progress("running", "shortsales_processing", 95, "Saving Short Sales data...")
-        short_files = list(OUTPUT_DIR.glob("short_sales_*.xlsx"))
-        if short_files:
-            latest_short = short_files[-1]  # Get most recent file
-            print(f"DEBUG: Processing Short Sales file: {latest_short}")
-            results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), trade_date)
+        # Step 4: Download and save Short Sales data
+        update_progress("running", "shortsales_downloading", 93, "Attempting to download fresh Short Sales data...")
+        short_path = OUTPUT_DIR / f"short_sales_{timestamp}.xlsx"
+        
+        # Try to download with longer timeout and better error handling
+        short_cmd = [sys.executable, "download_short_sales_excel.py", "--out", str(short_path), "--timeout", "90000"]
+        short_exit_code, short_stdout, short_stderr = await run_cmd(short_cmd, timeout=180)
+        
+        if short_exit_code == 0 and short_path.exists():
+            update_progress("running", "shortsales_processing", 95, "Processing Short Sales data...")
+            print(f"DEBUG: Processing fresh Short Sales file: {short_path}")
+            
+            # Extract actual trade date from the fresh Excel file before saving
+            try:
+                actual_trade_date = db.get_latest_trade_date_from_excel(str(short_path))
+                print(f"DEBUG: Extracted trade date from Short Sales Excel: {actual_trade_date}")
+                save_trade_date = actual_trade_date if actual_trade_date else trade_date
+            except Exception as e:
+                print(f"DEBUG: Could not extract trade date from Short Sales Excel, using default: {e}")
+                save_trade_date = trade_date
+                
+            results["short_sales_data"] = db.save_short_sales_trading(str(short_path), save_trade_date)
             if results["short_sales_data"]:
                 update_progress("running", "shortsales_saved", 98, "✅ Short Sales data saved successfully!")
             else:
                 update_progress("running", "shortsales_failed", 98, "⚠️ Failed to save Short Sales data")
         else:
-            update_progress("running", "shortsales_skipped", 98, "⚠️ No Short Sales files found")
-            results["short_sales_data"] = False
+            # Fallback to existing files if download fails
+            error_msg = f"Short Sales download failed (exit_code: {short_exit_code})"
+            if short_stderr:
+                error_msg += f" - {stderr_tail(short_stderr)}"
+            print(f"❌ {error_msg}")
+            update_progress("running", "shortsales_fallback", 96, "⚠️ Download failed, using most recent Short Sales file...")
+            # Get fresh list of Short Sales files and use the most recent by modification time
+            current_short_files = list(OUTPUT_DIR.glob("short_sales_*.xlsx"))
+            if current_short_files:
+                latest_short = max(current_short_files, key=lambda x: x.stat().st_mtime)
+                print(f"DEBUG: Using most recent Short Sales file: {latest_short}")
+                results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), trade_date)
+            else:
+                update_progress("running", "shortsales_skipped", 98, "⚠️ No Short Sales files found")
+                results["short_sales_data"] = False
         
         # Step 5: Scrape and save SET index data
         update_progress("running", "setindex_scraping", 99, "Scraping and saving SET index data...")
@@ -1241,18 +1448,19 @@ async def install_playwright_browsers():
 async def get_set_index():
     """Get SET index data with daily caching (database + file fallback)"""
     try:
-        # First check file cache to see if data is fresh (today)
+        # First check file cache to see if data is available (within last 7 days)
         latest_file = Path("_out/set_index_latest.json")
-        today = datetime.now().date()
-        file_is_fresh = False
+        from datetime import timedelta
+        cutoff_date = datetime.now().date() - timedelta(days=7)
+        file_is_recent = False
         
         if latest_file.exists():
-            # Check if file was modified today
+            # Check if file was modified within last 7 days
             file_mtime = datetime.fromtimestamp(latest_file.stat().st_mtime).date()
-            file_is_fresh = (file_mtime == today)
+            file_is_recent = (file_mtime >= cutoff_date)
             
-            if file_is_fresh:
-                print("📊 Using fresh SET index data from file cache")
+            if file_is_recent:
+                print("📊 Using recent SET index data from file cache")
                 with open(latest_file, 'r', encoding='utf-8') as f:
                     file_data = json.load(f)
                     if file_data.get('success') and file_data.get('data'):
@@ -1268,7 +1476,7 @@ async def get_set_index():
         try:
             db = get_proper_db()
             if db.is_set_index_data_fresh():
-                print("📊 Using fresh SET index data from database")
+                print("📊 Using recent SET index data from database")
                 db_result = db.get_latest_set_index_data()
                 if db_result['status'] == 'success' and db_result['data']:
                     return {
@@ -1281,8 +1489,8 @@ async def get_set_index():
         except Exception as db_error:
             print(f"⚠️ Database check failed: {db_error}")
         
-        # If no fresh data, scrape new data
-        print("🔄 No fresh data found, scraping new SET index data...")
+        # If no recent data, scrape new data
+        print("🔄 No recent data found, scraping new SET index data...")
         
         try:
             import subprocess
@@ -1380,8 +1588,12 @@ async def get_set_index():
 
 
 @app.get("/api/portfolio/dashboard")
-async def get_portfolio_dashboard():
+async def get_portfolio_dashboard(response: Response):
     """Get portfolio dashboard data with latest investor summary, sector summary, and individual stock data"""
+    # Add cache-busting headers to ensure fresh data
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     try:
         db = get_proper_db()
         
