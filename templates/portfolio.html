@@ -228,7 +228,7 @@
                             </select>
                         </div>
                         <button id="edit-mode-toggle" class="px-3 py-1 rounded-lg shadow text-sm border" onclick="toggleEditMode()">
-                            <span id="edit-mode-text">🔒 View Mode</span>
+                            <span id="edit-mode-text">✏️ Edit Mode</span>
                         </button>
                         <button id="save-portfolio-btn" class="px-3 py-1 rounded-lg shadow text-sm border bg-green-100 text-green-700 hidden" onclick="saveAllChanges()">
                             <span id="save-portfolio-text">💾 Save Changes</span>
@@ -936,7 +936,15 @@
             const sortedData = [...data].sort((a, b) => a.symbol.localeCompare(b.symbol));
 
             emptyState.style.display = 'none';
-            tbody.innerHTML = sortedData.map((stock, index) => {
+            
+            // Calculate totals for the summary row
+            let totalCost = 0;
+            let totalPLAmount = 0;
+            let totalPLPercent = 0;
+            let totalQuantity = 0;
+            
+            // First, render all the data rows and calculate totals
+            const dataRows = sortedData.map((stock, index) => {
                 const rowNumber = index + 1;
                 const quantity = stock.quantity || 0;
                 const avgCostPrice = stock.avg_cost_price || 0;
@@ -946,33 +954,46 @@
                 const plAmount = quantity > 0 && avgCostPrice > 0 ? (closePrice - avgCostPrice) * quantity : 0;
                 const plPercent = avgCostPrice > 0 && cost > 0 ? ((plAmount / cost) * 100) : 0;
                 
+                // Accumulate totals
+                totalCost += cost;
+                totalPLAmount += plAmount;
+                totalQuantity += quantity;
+                
                 return `
-                    <tr class="border-b last:border-b-0 hover:bg-slate-50" data-symbol="${stock.symbol}">
+                    <tr class="border-b hover:bg-slate-50" data-symbol="${stock.symbol}">
                         <td class="py-2 px-3 text-center font-medium">${rowNumber}</td>
                         <td class="py-2 px-3 font-medium">${stock.symbol || ''}</td>
                         <td class="py-2 px-3 text-right table-cell">
                             <div id="quantity-display-${stock.symbol}" onclick="startEdit('${stock.symbol}', 'quantity')" 
-                                 class="cursor-pointer hover:bg-blue-50 px-1 rounded transition-colors" title="Click to edit">
+                                 class="cursor-pointer hover:bg-blue-50 px-2 py-1 rounded transition-colors min-w-[80px] inline-block text-right" title="Click to edit">
                                 ${formatNumber(quantity, 0)}
                             </div>
-                            <input id="quantity-input-${stock.symbol}" type="number" 
-                                   class="hidden w-full text-right px-1 py-1 border rounded" 
-                                   value="${quantity}" min="0" step="1"
-                                   oninput="updateLiveCalculations('${stock.symbol}', 'quantity')"
+                            <input id="quantity-input-${stock.symbol}" type="text" 
+                                   class="hidden w-full text-right px-2 py-1 border-2 border-blue-500 rounded bg-white shadow-lg min-w-[100px] font-mono text-sm" 
+                                   value="${quantity}" 
+                                   data-original-value="${quantity}"
+                                   data-field="quantity"
+                                   data-symbol="${stock.symbol}"
+                                   oninput="handleInputFormatting('${stock.symbol}', 'quantity', this.value)"
                                    onblur="finishEdit('${stock.symbol}', 'quantity')" 
-                                   onkeydown="if(event.key==='Enter') finishEdit('${stock.symbol}', 'quantity'); if(event.key==='Escape') cancelEdit('${stock.symbol}', 'quantity')">
+                                   onkeydown="handleInputNavigation(event, '${stock.symbol}', 'quantity')"
+                                   onfocus="this.select()">
                         </td>
                         <td class="py-2 px-3 text-right table-cell">
                             <div id="avgprice-display-${stock.symbol}" onclick="startEdit('${stock.symbol}', 'avgprice')" 
-                                 class="cursor-pointer hover:bg-blue-50 px-1 rounded transition-colors" title="Click to edit">
+                                 class="cursor-pointer hover:bg-blue-50 px-2 py-1 rounded transition-colors min-w-[80px] inline-block text-right" title="Click to edit">
                                 ${formatNumber(avgCostPrice, 2)}
                             </div>
-                            <input id="avgprice-input-${stock.symbol}" type="number" 
-                                   class="hidden w-full text-right px-1 py-1 border rounded" 
-                                   value="${avgCostPrice}" min="0" step="0.01"
-                                   oninput="updateLiveCalculations('${stock.symbol}', 'avgprice')"
+                            <input id="avgprice-input-${stock.symbol}" type="text" 
+                                   class="hidden w-full text-right px-2 py-1 border-2 border-blue-500 rounded bg-white shadow-lg min-w-[100px] font-mono text-sm" 
+                                   value="${avgCostPrice}" 
+                                   data-original-value="${avgCostPrice}"
+                                   data-field="avgprice"
+                                   data-symbol="${stock.symbol}"
+                                   oninput="handleInputFormatting('${stock.symbol}', 'avgprice', this.value)"
                                    onblur="finishEdit('${stock.symbol}', 'avgprice')" 
-                                   onkeydown="if(event.key==='Enter') finishEdit('${stock.symbol}', 'avgprice'); if(event.key==='Escape') cancelEdit('${stock.symbol}', 'avgprice')">
+                                   onkeydown="handleInputNavigation(event, '${stock.symbol}', 'avgprice')"
+                                   onfocus="this.select()">
                         </td>
                         <td class="py-2 px-3 text-right table-cell">${formatNumber(cost, 2)}</td>
                         <td class="py-2 px-3 text-right table-cell ${getValueClass(stock.change)}">${stock.change > 0 ? '+' : ''}${formatNumber(stock.change)}</td>
@@ -999,6 +1020,32 @@
                 `;
             }).join('');
             
+            // Calculate weighted average P/L percentage
+            totalPLPercent = totalCost > 0 ? (totalPLAmount / totalCost) * 100 : 0;
+            
+            // Create the total row
+            const totalRow = `
+                <tr class="border-t-2 border-blue-300 bg-blue-50 font-semibold" id="portfolio-total-row">
+                    <td class="py-3 px-3 text-center font-bold text-blue-800">TOTAL</td>
+                    <td class="py-3 px-3 font-bold text-blue-800">${sortedData.length} symbols</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">${formatNumber(totalQuantity, 0)}</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">${formatNumber(totalCost, 2)}</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-right font-bold ${getValueClass(totalPLAmount)}">${totalPLAmount > 0 ? '+' : ''}${formatNumber(totalPLAmount, 2)}</td>
+                    <td class="py-3 px-3 text-right font-bold ${getValueClass(totalPLPercent)}">${totalPLPercent > 0 ? '+' : ''}${formatNumber(totalPLPercent, 2)}%</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-right font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-center font-bold text-blue-800">-</td>
+                    <td class="py-3 px-3 text-center font-bold text-blue-800">-</td>
+                </tr>
+            `;
+            
+            // Combine data rows with total row
+            tbody.innerHTML = dataRows + totalRow;
+            
             // Create mini charts for all symbols in background (non-blocking)
             sortedData.forEach((stock, index) => {
                 // Use requestIdleCallback for better performance and non-blocking behavior
@@ -1013,6 +1060,11 @@
                     }, index * 100); // Reduced delay for faster loading
                 }
             });
+            
+            // Show edit hints if in edit mode
+            if (isEditModeEnabled) {
+                showEditHints();
+            }
         }
 
         function renderPortfolioTable(data) {
@@ -1752,7 +1804,8 @@
         function toggleEditMode() {
             // If we're currently in edit mode and have unsaved changes, warn the user
             if (isEditModeEnabled && pendingChanges && pendingChanges.size > 0) {
-                const confirmExit = confirm(`You have ${pendingChanges.size} unsaved changes. Are you sure you want to exit edit mode? Your changes will be lost.`);
+                const changeText = pendingChanges.size === 1 ? '1 unsaved change' : `${pendingChanges.size} unsaved changes`;
+                const confirmExit = confirm(`⚠️ WARNING: You have ${changeText}!\n\nAre you sure you want to exit Edit Mode?\n\nYour changes will be lost if you don't save them first.\n\nClick "OK" to exit without saving, or "Cancel" to stay in Edit Mode.`);
                 if (!confirmExit) {
                     return;
                 }
@@ -1764,25 +1817,19 @@
             const saveBtn = document.getElementById('save-portfolio-btn');
             
             if (isEditModeEnabled) {
-                toggleBtn.className = 'px-3 py-1 rounded-lg shadow text-sm bg-green-100 text-green-700 border border-green-300';
-                toggleText.textContent = '✏️ Edit Mode';
+                toggleBtn.className = 'px-3 py-1 rounded-lg shadow text-sm bg-red-100 text-red-700 border border-red-300';
+                toggleText.textContent = '❌ Cancel';
                 saveBtn.classList.remove('hidden');
                 
                 // Show edit hints
-                const editables = document.querySelectorAll('.cursor-pointer[title="Click to edit"]');
-                editables.forEach(el => {
-                    el.classList.add('bg-yellow-50', 'border', 'border-yellow-200');
-                });
+                showEditHints();
             } else {
                 toggleBtn.className = 'px-3 py-1 rounded-lg shadow text-sm border';
-                toggleText.textContent = '🔒 View Mode';
+                toggleText.textContent = '✏️ Edit Mode';
                 saveBtn.classList.add('hidden');
                 
                 // Hide edit hints and cancel any active edits
-                const editables = document.querySelectorAll('.cursor-pointer[title="Click to edit"]');
-                editables.forEach(el => {
-                    el.classList.remove('bg-yellow-50', 'border', 'border-yellow-200');
-                });
+                hideEditHints();
                 
                 // Cancel any active edits
                 Object.keys(editMode).forEach(key => {
@@ -1796,6 +1843,20 @@
             }
         }
         
+        function showEditHints() {
+            const editables = document.querySelectorAll('.cursor-pointer[title="Click to edit"]');
+            editables.forEach(el => {
+                el.classList.add('bg-yellow-50', 'border', 'border-yellow-200');
+            });
+        }
+        
+        function hideEditHints() {
+            const editables = document.querySelectorAll('.cursor-pointer[title="Click to edit"]');
+            editables.forEach(el => {
+                el.classList.remove('bg-yellow-50', 'border', 'border-yellow-200');
+            });
+        }
+        
         function startEdit(symbol, field) {
             // Only allow editing if edit mode is enabled
             if (!isEditModeEnabled) {
@@ -1807,6 +1868,11 @@
             const inputEl = document.getElementById(`${field}-input-${symbol}`);
             
             if (displayEl && inputEl) {
+                // Store the current value as original value for cancellation
+                const currentValue = inputEl.value;
+                inputEl.setAttribute('data-original-value', currentValue);
+                
+                // Show input, hide display
                 displayEl.classList.add('hidden');
                 inputEl.classList.remove('hidden');
                 inputEl.focus();
@@ -1817,6 +1883,8 @@
                 if (typeof pauseAutoUpdate !== 'undefined') {
                     pauseAutoUpdate = true;
                 }
+                
+                console.log(`✏️ Started editing ${symbol} ${field}, original value: ${currentValue}`);
             }
         }
         
@@ -1825,9 +1893,22 @@
             const inputEl = document.getElementById(`${field}-input-${symbol}`);
             
             if (displayEl && inputEl) {
+                // Restore original value
+                const originalValue = inputEl.getAttribute('data-original-value') || '0';
+                const numericValue = parseFloat(originalValue);
+                
+                // Update the display with original formatted value
+                displayEl.textContent = formatNumber(numericValue, field === 'quantity' ? 0 : 2);
+                
+                // Restore the input value
+                inputEl.value = originalValue;
+                
+                // Hide input, show display
                 displayEl.classList.remove('hidden');
                 inputEl.classList.add('hidden');
                 delete editMode[`${symbol}-${field}`];
+                
+                console.log(`❌ Edit cancelled for ${symbol} ${field}, restored to ${originalValue}`);
             }
         }
         
@@ -1837,7 +1918,8 @@
             
             if (displayEl && inputEl) {
                 const inputValue = inputEl.value.trim();
-                const newValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                // Remove commas and parse the numeric value
+                const newValue = inputValue === '' ? 0 : parseFloat(inputValue.replace(/,/g, ''));
                 
                 // Validate input
                 if (isNaN(newValue) || newValue < 0) {
@@ -1872,7 +1954,7 @@
                 const plAmount = quantity > 0 && avgCostPrice > 0 ? (closePrice - avgCostPrice) * quantity : 0;
                 const plPercent = avgCostPrice > 0 && cost > 0 ? ((plAmount / cost) * 100) : 0;
                 
-                // Update display immediately
+                // Update display immediately with formatted value
                 displayEl.textContent = formatNumber(newValue, field === 'quantity' ? 0 : 2);
                 
                 // Update all related values in real-time
@@ -1899,7 +1981,7 @@
         // Debounce timer for live calculations
         let liveCalcTimer = null;
         
-        function updateLiveCalculations(symbol, field) {
+        function updateLiveCalculations(symbol, field, numericValue = null) {
             // Clear previous timer
             if (liveCalcTimer) {
                 clearTimeout(liveCalcTimer);
@@ -1908,11 +1990,16 @@
             // Debounce: wait 150ms before calculating
             liveCalcTimer = setTimeout(() => {
                 try {
-                    const inputEl = document.getElementById(`${field}-input-${symbol}`);
-                    if (!inputEl) return;
+                    let newValue = numericValue;
                     
-                    const inputValue = inputEl.value.trim();
-                    const newValue = inputValue === '' ? 0 : parseFloat(inputValue);
+                    // If no numeric value provided, get it from input
+                    if (newValue === null) {
+                        const inputEl = document.getElementById(`${field}-input-${symbol}`);
+                        if (!inputEl) return;
+                        
+                        const inputValue = inputEl.value.trim();
+                        newValue = inputValue === '' ? 0 : parseFloat(inputValue.replace(/,/g, ''));
+                    }
                     
                     // Skip if invalid number
                     if (isNaN(newValue) || newValue < 0) return;
@@ -1931,6 +2018,10 @@
                     } else if (field === 'avgprice') {
                         avgCostPrice = newValue;
                     }
+                    
+                    // Update the current row data
+                    currentRow.quantity = quantity;
+                    currentRow.avg_cost_price = avgCostPrice;
                     
                     // Calculate live values
                     const cost = quantity * avgCostPrice;
@@ -1973,6 +2064,63 @@
                 cells[9].textContent = (plPercent > 0 ? '+' : '') + formatNumber(plPercent, 2) + '%';
                 cells[9].className = `py-2 px-3 text-right table-cell ${getValueClass(plPercent)}`;
             }
+            
+            // Update the total row
+            updateTotalRow();
+        }
+        
+        function updateTotalRow() {
+            // Recalculate totals from all portfolio data
+            let totalCost = 0;
+            let totalPLAmount = 0;
+            let totalQuantity = 0;
+            
+            // Get all portfolio rows (excluding the total row)
+            const portfolioRows = document.querySelectorAll('tr[data-symbol]');
+            
+            portfolioRows.forEach(row => {
+                const symbol = row.getAttribute('data-symbol');
+                const currentRow = myPortfolioData.find(stock => stock.symbol === symbol);
+                
+                if (currentRow) {
+                    const quantity = currentRow.quantity || 0;
+                    const avgCostPrice = currentRow.avg_cost_price || 0;
+                    const cost = quantity * avgCostPrice;
+                    const closePrice = currentRow.close || 0;
+                    const plAmount = quantity > 0 && avgCostPrice > 0 ? (closePrice - avgCostPrice) * quantity : 0;
+                    
+                    totalCost += cost;
+                    totalPLAmount += plAmount;
+                    totalQuantity += quantity;
+                }
+            });
+            
+            // Calculate weighted average P/L percentage
+            const totalPLPercent = totalCost > 0 ? (totalPLAmount / totalCost) * 100 : 0;
+            
+            // Update the total row
+            const totalRow = document.getElementById('portfolio-total-row');
+            if (totalRow) {
+                const cells = totalRow.querySelectorAll('td');
+                
+                if (cells[2]) { // Total Quantity
+                    cells[2].textContent = formatNumber(totalQuantity, 0);
+                }
+                
+                if (cells[4]) { // Total Cost
+                    cells[4].textContent = formatNumber(totalCost, 2);
+                }
+                
+                if (cells[8]) { // Total P/L Amount
+                    cells[8].textContent = (totalPLAmount > 0 ? '+' : '') + formatNumber(totalPLAmount, 2);
+                    cells[8].className = `py-3 px-3 text-right font-bold ${getValueClass(totalPLAmount)}`;
+                }
+                
+                if (cells[9]) { // Total P/L Percent
+                    cells[9].textContent = (totalPLPercent > 0 ? '+' : '') + formatNumber(totalPLPercent, 2) + '%';
+                    cells[9].className = `py-3 px-3 text-right font-bold ${getValueClass(totalPLPercent)}`;
+                }
+            }
         }
         
         // Track ongoing saves to prevent duplicates
@@ -1980,6 +2128,88 @@
         
         // Track pending changes for manual save
         let pendingChanges = new Set();
+        
+        // Enhanced input formatting and navigation functions
+        function handleInputFormatting(symbol, field, value) {
+            // Remove all non-numeric characters except decimal point
+            let cleanValue = value.replace(/[^\d.]/g, '');
+            
+            // Ensure only one decimal point
+            const parts = cleanValue.split('.');
+            if (parts.length > 2) {
+                cleanValue = parts[0] + '.' + parts.slice(1).join('');
+            }
+            
+            // Format with commas for thousands
+            if (field === 'quantity') {
+                // For quantity, remove decimal and format with commas
+                cleanValue = cleanValue.split('.')[0];
+                if (cleanValue) {
+                    const numValue = parseInt(cleanValue);
+                    if (!isNaN(numValue)) {
+                        cleanValue = numValue.toLocaleString();
+                    }
+                }
+            } else if (field === 'avgprice') {
+                // For price, allow up to 2 decimal places
+                if (parts.length === 2 && parts[1].length > 2) {
+                    cleanValue = parts[0] + '.' + parts[1].substring(0, 2);
+                }
+                if (cleanValue && !cleanValue.includes('.')) {
+                    const numValue = parseFloat(cleanValue);
+                    if (!isNaN(numValue)) {
+                        cleanValue = numValue.toLocaleString();
+                    }
+                }
+            }
+            
+            // Update input value
+            const inputEl = document.getElementById(`${field}-input-${symbol}`);
+            if (inputEl) {
+                inputEl.value = cleanValue;
+            }
+            
+            // Update live calculations with the numeric value
+            const numericValue = parseFloat(cleanValue.replace(/,/g, '')) || 0;
+            updateLiveCalculations(symbol, field, numericValue);
+        }
+        
+        function handleInputNavigation(event, symbol, field) {
+            const key = event.key;
+            
+            if (key === 'Tab') {
+                event.preventDefault();
+                // Move to next field (right)
+                const nextField = field === 'quantity' ? 'avgprice' : 'quantity';
+                const nextInput = document.getElementById(`${nextField}-input-${symbol}`);
+                if (nextInput) {
+                    nextInput.focus();
+                    nextInput.select();
+                }
+            } else if (key === 'Enter') {
+                event.preventDefault();
+                // Move to next row (down)
+                const currentRow = document.querySelector(`tr[data-symbol="${symbol}"]`);
+                if (currentRow) {
+                    const nextRow = currentRow.nextElementSibling;
+                    if (nextRow) {
+                        const nextSymbol = nextRow.getAttribute('data-symbol');
+                        if (nextSymbol) {
+                            const nextInput = document.getElementById(`${field}-input-${nextSymbol}`);
+                            if (nextInput) {
+                                nextInput.focus();
+                                nextInput.select();
+                            }
+                        }
+                    }
+                }
+                // If no next row, finish editing
+                finishEdit(symbol, field);
+            } else if (key === 'Escape') {
+                event.preventDefault();
+                cancelEdit(symbol, field);
+            }
+        }
         
         // Add a simple test function to verify save functionality
         function testSaveFunction() {
