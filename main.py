@@ -116,7 +116,20 @@ async def startup_event():
         if result.returncode == 0:
             print("✅ Sector data completed")
         
-        # 5. Save to database using existing working method
+        # 5. Run investor data scraping (table data only)
+        print("📥 Running investor data scraping...")
+        os.makedirs("_out/investor", exist_ok=True)
+        result = subprocess.run([
+            sys.executable, "scrape_investor_data.py",
+            "--market", "SET",
+            "--out-table", f"_out/investor/investor_table_SET_{timestamp}.csv"
+        ], capture_output=True, text=True)
+        if result.returncode == 0:
+            print("✅ Investor data completed")
+        else:
+            print(f"⚠️ Investor data failed: {result.stderr}")
+        
+        # 6. Save to database using existing working method
         print("💾 Saving to database...")
         try:
             from supabase_database import get_proper_db
@@ -159,6 +172,21 @@ async def startup_event():
                     except Exception as e:
                         print(f"⚠️ Failed to save sector {sector_name}: {e}")
                 print(f"✅ Sector data saved to database ({saved_sectors} sectors)")
+                
+            # Save Investor data (use same trade date as other data)
+            investor_files = list(Path("_out/investor").glob("investor_table_SET_*.csv"))
+            if investor_files:
+                latest_investor = max(investor_files, key=lambda x: x.stat().st_mtime)
+                try:
+                    import pandas as pd
+                    investor_df = pd.read_csv(latest_investor)
+                    investor_trade_date = dt.date(2025, 8, 18)  # Use same date as other data
+                    if db.save_investor_summary(investor_df, investor_trade_date):
+                        print("✅ Investor data saved to database")
+                    else:
+                        print("⚠️ Failed to save investor data to database")
+                except Exception as e:
+                    print(f"⚠️ Failed to save investor data: {e}")
                 
             print("🎉 All data saved successfully!")
             
@@ -2329,6 +2357,141 @@ async def save_portfolio_holding(request: Request):
             raise HTTPException(status_code=500, detail="Portfolio holdings table not found. Please create the database table first by running create_portfolio_holdings_table.sql in your Supabase SQL editor.")
         else:
             raise HTTPException(status_code=500, detail=f"Error saving portfolio holding: {error_msg}")
+
+
+@app.get("/api/portfolio/export.csv")
+async def export_portfolio_csv(portfolio_date: str = None):
+    """Export portfolio holdings as CSV"""
+    try:
+        db = get_proper_db()
+        
+        # Get available dates if no date specified
+        if not portfolio_date:
+            dates = db.get_available_portfolio_dates()
+            if not dates:
+                raise HTTPException(status_code=404, detail="No portfolio data found")
+            portfolio_date = dates[0]  # Use most recent date
+        
+        # Get holdings data using the same logic as the holdings endpoint
+        from datetime import datetime as dt
+        
+        # Parse the date
+        try:
+            parsed_date = dt.strptime(portfolio_date, '%Y-%m-%d').date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+        
+        # Get portfolio holdings for the date
+        raw_holdings = db.get_portfolio_holdings(parsed_date)
+        
+        # Get latest market data for calculations
+        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+        latest_market_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        
+        # Get current prices and portfolio symbols
+        portfolio_symbols = db.get_portfolio_symbols()
+        holdings = []
+        
+        if latest_market_date:
+            # Get market data for all portfolio symbols
+            for symbol in portfolio_symbols:
+                # Get stock data
+                stock_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                stock_data = stock_result.data[0] if stock_result.data else {}
+                
+                # Get NVDR data
+                nvdr_result = db.client.table('nvdr_trading').select('value_net').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                nvdr_value = nvdr_result.data[0]['value_net'] if nvdr_result.data else 0
+                
+                # Get Short Sales data
+                short_result = db.client.table('short_sales_trading').select('short_value_baht').eq('trade_date', latest_market_date).eq('symbol', symbol).execute()
+                short_value = short_result.data[0]['short_value_baht'] if short_result.data else 0
+                
+                # Get holding data for this symbol and date
+                holding = raw_holdings.get(symbol, {})
+                
+                # Parse values safely
+                def parse_change(value):
+                    if not value or value == '-' or value == '':
+                        return 0
+                    try:
+                        cleaned = str(value).replace('+', '').replace(',', '').strip()
+                        return float(cleaned) if cleaned != '-' else 0
+                    except (ValueError, TypeError):
+                        return 0
+                
+                # Include all portfolio symbols (whether they have saved data or not)
+                quantity = holding.get('quantity', 0)
+                avg_cost_price = holding.get('avg_cost_price', 0)
+                
+                holdings.append({
+                    'symbol': symbol,
+                    'quantity': quantity,
+                    'avg_cost_price': avg_cost_price,
+                    'close': stock_data.get('last_price', 0),
+                    'change': parse_change(stock_data.get('change', 0)),
+                    'percent_change': parse_change(stock_data.get('percent_change', 0)),
+                    'nvdr': nvdr_value,
+                    'shortBaht': short_value
+                })
+        
+        if not holdings:
+            raise HTTPException(status_code=404, detail=f"No portfolio symbols found for date {portfolio_date}")
+        
+        # Create CSV content
+        csv_lines = []
+        headers = ['No.', 'Symbol', 'Quantity', 'AVG Cost Price', 'Cost', 'Change', 'Close Price', '%Change', 'P/L', '%P/L', 'NVDR', 'Short Sales']
+        csv_lines.append(','.join(f'"{h}"' for h in headers))
+        
+        for i, holding in enumerate(holdings, 1):
+            # Calculate derived values
+            quantity = float(holding.get('quantity', 0))
+            avg_cost = float(holding.get('avg_cost_price', 0))
+            close_price = float(holding.get('close', 0))
+            change = float(holding.get('change', 0))
+            percent_change = float(holding.get('percent_change', 0))
+            nvdr = float(holding.get('nvdr', 0))
+            short_sales = float(holding.get('shortBaht', 0))
+            
+            cost = quantity * avg_cost
+            pl = quantity * (close_price - avg_cost)
+            pl_percent = (pl / cost * 100) if cost > 0 else 0
+            
+            row = [
+                str(i),
+                f'"{holding.get("symbol", "")}"',
+                f'{quantity:.0f}',
+                f'{avg_cost:.2f}',
+                f'{cost:.2f}',
+                f'{change:.2f}',
+                f'{close_price:.2f}',
+                f'{percent_change:.2f}%',
+                f'{pl:.2f}',
+                f'{pl_percent:.2f}%',
+                f'{nvdr:.2f}',
+                f'{short_sales:.2f}'
+            ]
+            csv_lines.append(','.join(row))
+        
+        csv_content = '\n'.join(csv_lines)
+        
+        # Return CSV response
+        return Response(
+            content=f'\ufeff{csv_content}',  # Add BOM for proper Excel encoding
+            media_type='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename="my-portfolio-{portfolio_date}.csv"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = str(e)
+        if 'portfolio_holdings' in error_msg and ('does not exist' in error_msg or 'not found' in error_msg):
+            raise HTTPException(status_code=500, detail="Portfolio holdings table not found. Please create the database table first.")
+        else:
+            raise HTTPException(status_code=500, detail=f"Error exporting portfolio: {error_msg}")
 
 
 @app.post("/api/portfolio/setup-database")

@@ -428,9 +428,6 @@
             return `${n.toFixed(frac)}%`;
         }
 
-        function csvEscape(s) {
-            return `"${s.replaceAll('"', '""')}"`;
-        }
 
         function formatNumber(value, millions = false) {
             if (value === null || value === undefined || isNaN(value)) return '';
@@ -1173,34 +1170,35 @@
         }
 
         // Export functionality
-        function exportCSV() {
-            const headers = ['Symbol', 'ราคาปิด (Baht)', 'Change', '% Change', 'NVDR (Baht)', 'Short Sales (Baht)'];
-            const lines = [headers.map(csvEscape).join(',')];
+        async function exportCSV() {
+            try {
+                const currentDate = document.getElementById('portfolio-date-select').value;
+                const url = `/api/portfolio/export.csv${currentDate ? `?portfolio_date=${currentDate}` : ''}`;
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        alert('No portfolio data found to export.');
+                    } else {
+                        const error = await response.text();
+                        alert(`Export failed: ${error}`);
+                    }
+                    return;
+                }
 
-            const source = Array.isArray(myPortfolioData) ? myPortfolioData : [];
-            if (source.length === 0) {
-                alert('Your portfolio is empty. Add symbols to export.');
-                return;
+                // Create download link for the CSV file
+                const blob = await response.blob();
+                const downloadUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = `my-portfolio-${currentDate || new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
+                URL.revokeObjectURL(downloadUrl);
+                
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Failed to export portfolio data.');
             }
-
-            source.forEach(stock => {
-                lines.push([
-                    csvEscape(stock.symbol || ''),
-                    String(stock.close || 0),
-                    String(stock.change || 0),
-                    String(stock.percent_change || 0),
-                    String(stock.nvdr || 0),
-                    String(stock.shortBaht || 0)
-                ].join(','));
-            });
-
-            const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `my-portfolio-${new Date().toISOString().split('T')[0]}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
         }
 
         // Create mini chart for a symbol using SVG

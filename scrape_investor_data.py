@@ -47,22 +47,10 @@ Examples:
     )
     
     parser.add_argument(
-        "--out-json",
-        type=str,
-        help="Output JSON file path (default: investor_chart_<MARKET>_simple.json)"
-    )
-    
-    parser.add_argument(
         "--timeout",
         type=int,
         default=30,
         help="Timeout in seconds (default: 30)"
-    )
-    
-    parser.add_argument(
-        "--allow-missing-chart",
-        action="store_true",
-        help="Exit successfully even if chart data is not found"
     )
     
     return parser.parse_args()
@@ -322,36 +310,6 @@ def parse_investor_data_lines(lines: List[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def extract_chart_data_from_html(html: str) -> Optional[Dict[str, Any]]:
-    """Extract chart data from HTML."""
-    soup = BeautifulSoup(html, 'html.parser')
-    
-    # Look for JSON data in script tags
-    scripts = soup.find_all('script')
-    
-    for script in scripts:
-        if script.string:
-            script_content = script.string.strip()
-            
-            # Look for chart-related JSON
-            if any(keyword in script_content.lower() for keyword in ['chart', 'series', 'data', 'graph']):
-                try:
-                    # Try to extract JSON from script
-                    import re
-                    json_matches = re.findall(r'\{[^{}]*"series"[^{}]*\}', script_content)
-                    if json_matches:
-                        for match in json_matches:
-                            try:
-                                data = json.loads(match)
-                                if 'series' in data:
-                                    print("Found chart data in script tag")
-                                    return data
-                            except json.JSONDecodeError:
-                                continue
-                except Exception:
-                    continue
-    
-    return None
 
 
 def save_csv(table_data: Dict[str, Any], filepath: str) -> None:
@@ -372,23 +330,15 @@ def save_csv(table_data: Dict[str, Any], filepath: str) -> None:
     print(f"Saved CSV to {filepath} with {len(rows)} rows")
 
 
-def save_json(data: Dict[str, Any], filepath: str) -> None:
-    """Save JSON data to file."""
-    with open(filepath, 'w', encoding='utf-8') as jsonfile:
-        json.dump(data, jsonfile, indent=2, ensure_ascii=False)
-    
-    print(f"Saved JSON to {filepath}")
 
 
 def main():
     """Main scraping function using Jina.ai public proxy."""
     args = setup_cli()
     
-    # Setup default output paths
+    # Setup default output path
     if not args.out_table:
         args.out_table = f"investor_table_{args.market}_simple.csv"
-    if not args.out_json:
-        args.out_json = f"investor_chart_{args.market}_simple.json"
     
     # Build URL - use English version like VBA
     url = f"https://www.set.or.th/en/market/statistics/investor-type?market={args.market}"
@@ -401,21 +351,10 @@ def main():
         table_data = extract_table_from_html(html_content)
         if table_data:
             save_csv(table_data, args.out_table)
+            print("Scraping completed successfully!")
         else:
             print("ERROR: No table data found")
             sys.exit(2)
-        
-        # Extract chart data
-        chart_data = extract_chart_data_from_html(html_content)
-        if chart_data:
-            save_json(chart_data, args.out_json)
-        else:
-            print("WARNING: No chart data found")
-            if not args.allow_missing_chart:
-                print("ERROR: Chart data not found and --allow-missing-chart not specified")
-                sys.exit(3)
-        
-        print("Scraping completed successfully!")
         
     except Exception as e:
         print(f"ERROR: {e}")
