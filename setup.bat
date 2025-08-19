@@ -161,6 +161,7 @@ echo.
 echo 📊 Manual Controls:
 echo - Start server: Double-click start.bat
 echo - Server manager: Double-click server_manager.bat
+echo - Git updates: Double-click git_update.bat
 echo.
 echo 🔧 Management:
 echo - View tasks: Press Win+R, type "taskschd.msc"

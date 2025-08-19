@@ -249,6 +249,7 @@ The project includes Windows batch files for easy automation. This is the **simp
 - **`setup.bat`** (run once): Complete setup including auto-start and scheduled scraping
 - **`start.bat`** (manual start): Starts the server with database updates (no browser)
 - **`server_manager.bat`** (control): Interactive server management interface
+- **`git_update.bat`** (updates): Check for and pull latest git updates
 
 ### 🚀 **One-Click Windows Setup:**
 
