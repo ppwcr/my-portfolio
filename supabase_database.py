@@ -298,6 +298,34 @@ class ProperDatabaseManager:
             print(f"💥 DEBUG: Full traceback: {traceback.format_exc()}")
             return False
     
+    def _create_set_index_table(self) -> bool:
+        """Create the SET index table if it doesn't exist"""
+        try:
+            # Try to create table by inserting a dummy record (Supabase will auto-create schema)
+            dummy_record = {
+                'trade_date': '2025-01-01',
+                'index_name': 'TEST',
+                'last_value': 0,
+                'change_value': 0,
+                'change_text': 'test',
+                'volume_thousands': 0,
+                'value_million_baht': 0,
+                'created_at': '2025-01-01T00:00:00Z'
+            }
+            
+            # Insert dummy record (this creates the table with proper schema)
+            result = self.client.table('set_index').insert(dummy_record).execute()
+            
+            # Delete the dummy record
+            self.client.table('set_index').delete().eq('index_name', 'TEST').execute()
+            
+            print("✅ SET index table created successfully!")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error creating SET index table: {str(e)}")
+            return False
+    
     def save_set_index_data(self, data: list) -> dict:
         """Save SET index data to the database"""
         try:
@@ -307,8 +335,21 @@ class ProperDatabaseManager:
             # Get current date for trade_date
             trade_date = datetime.now().date()
             
-            # Check if data for today already exists
-            existing = self.client.table('set_index').select('*').eq('trade_date', trade_date.isoformat()).execute()
+            # Check if data for today already exists (this will also test if table exists)
+            try:
+                existing = self.client.table('set_index').select('*').eq('trade_date', trade_date.isoformat()).execute()
+            except Exception as table_error:
+                # If table doesn't exist, try to create it
+                error_msg = str(table_error).lower()
+                if 'does not exist' in error_msg or 'relation' in error_msg:
+                    print("📊 SET index table doesn't exist, attempting to create it...")
+                    success = self._create_set_index_table()
+                    if not success:
+                        raise Exception("Failed to create SET index table")
+                    # Try again after creating table
+                    existing = self.client.table('set_index').select('*').eq('trade_date', trade_date.isoformat()).execute()
+                else:
+                    raise table_error
             
             if existing.data:
                 # Delete existing data for today before inserting new data
@@ -334,7 +375,7 @@ class ProperDatabaseManager:
                     'last_value': self._parse_number(item.get('last', '')),
                     'change_value': change_value,
                     'change_text': change_str,
-                    'volume_thousands': self._parse_number(item.get('volume', '')) if item.get('volume') not in ['-', ''] else None,
+                    'volume_thousands': self._parse_integer(item.get('volume', '')) if item.get('volume') not in ['-', ''] else None,
                     'value_million_baht': self._parse_number(item.get('value', '')) if item.get('value') not in ['-', ''] else None,
                     'created_at': datetime.now().isoformat()
                 }

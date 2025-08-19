@@ -4,7 +4,7 @@ echo.
 
 REM Get the current directory
 set "CURRENT_DIR=%~dp0"
-set "BATCH_PATH=%CURRENT_DIR%start_with_db_update.bat"
+set "BATCH_PATH=%CURRENT_DIR%start.bat"
 
 REM Create a VBS script to run the batch file hidden
 echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\portfolio_startup.vbs"
@@ -36,15 +36,15 @@ echo.
 echo ✅ Auto-start setup complete!
 echo.
 echo The Portfolio Dashboard will now start automatically when you log in.
-echo It will also update the database with fresh market data on startup.
+echo It will automatically check for git updates and start the server.
 echo.
 echo To disable auto-start:
 echo 1. Press Win+R, type "shell:startup" and press Enter
 echo 2. Delete "Portfolio Dashboard.lnk"
 echo.
 echo To manually start/stop:
+echo - Start with git update check: Double-click start.bat
 echo - Start with DB update: Double-click start_with_db_update.bat
-echo - Start without update: Double-click start.bat
 echo - Stop: Close the terminal window or press Ctrl+C
 echo.
 pause

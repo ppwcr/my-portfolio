@@ -858,7 +858,7 @@ async def save_to_database(download_fresh: bool = False):
                     "platform": sys.platform
                 }
             )
-        results = {"investor_data": False, "sector_data": {}, "nvdr_data": False, "short_sales_data": False}
+        results = {"investor_data": False, "sector_data": {}, "nvdr_data": False, "short_sales_data": False, "set_index_data": False}
         
         # Initialize trade_date early to avoid reference errors
         trade_date = None
@@ -989,16 +989,36 @@ async def save_to_database(download_fresh: bool = False):
             update_progress("running", "shortsales_skipped", 98, "⚠️ No Short Sales files found")
             results["short_sales_data"] = False
         
+        # Step 5: Scrape and save SET index data
+        update_progress("running", "setindex_scraping", 99, "Scraping and saving SET index data...")
+        
+        cmd = [sys.executable, "scrape_set_index.py", "--save-db"]
+        exit_code, stdout, stderr = await run_cmd(cmd, timeout=45)
+        
+        if exit_code == 0:
+            results["set_index_data"] = True
+            update_progress("running", "setindex_saved", 99, "✅ SET index data saved successfully!")
+        else:
+            error_msg = f"Failed to scrape SET index data (exit_code: {exit_code})"
+            if stderr:
+                error_msg += f" - {stderr_tail(stderr)}"
+            update_progress("running", "setindex_failed", 99, f"⚠️ {error_msg}")
+            print(f"❌ SET index scraping failed: {error_msg}")
+            print(f"   stdout: {stdout}")
+            print(f"   stderr: {stderr}")
+            results["set_index_data"] = False
+        
         # Final results with detailed analysis
         sector_success = all(results["sector_data"].values()) if results["sector_data"] else False
-        total_success = results["investor_data"] and sector_success and results["nvdr_data"] and results["short_sales_data"]
+        total_success = results["investor_data"] and sector_success and results["nvdr_data"] and results["short_sales_data"] and results["set_index_data"]
         
         # Create detailed success/failure summary
         success_summary = {
             "investor_data": results["investor_data"],
             "sector_data": f"{sum(results['sector_data'].values())} of {len(results['sector_data'])} sectors" if results["sector_data"] else "No sectors",
             "nvdr_data": results["nvdr_data"],
-            "short_sales_data": results["short_sales_data"]
+            "short_sales_data": results["short_sales_data"],
+            "set_index_data": results["set_index_data"]
         }
         
         failed_components = []
@@ -1011,6 +1031,8 @@ async def save_to_database(download_fresh: bool = False):
             failed_components.append("NVDR data")
         if not results["short_sales_data"]:
             failed_components.append("short sales data")
+        if not results["set_index_data"]:
+            failed_components.append("SET index data")
         
         if total_success:
             message = "✅ All data saved successfully"

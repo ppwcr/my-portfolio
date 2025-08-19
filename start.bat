@@ -1,8 +1,33 @@
 @echo off
+setlocal enabledelayedexpansion
 echo Starting Portfolio Dashboard Server...
 echo.
 echo This will start the server on http://127.0.0.1:8000
 echo Press Ctrl+C to stop the server
+echo.
+
+REM Check for git updates
+echo 🔄 Checking for git updates...
+git fetch >nul 2>&1
+if not errorlevel 1 (
+    for /f %%i in ('git rev-list HEAD...origin/main --count 2^>nul') do set "UPDATE_COUNT=%%i"
+    if defined UPDATE_COUNT (
+        if not "!UPDATE_COUNT!"=="0" (
+            echo 📥 Found !UPDATE_COUNT! update(s) available
+            echo ⬇️  Pulling latest changes...
+            git pull origin main
+            if not errorlevel 1 (
+                echo ✅ Successfully updated to latest version
+            ) else (
+                echo ⚠️  Git pull failed, continuing with current version
+            )
+        ) else (
+            echo ✅ Already up to date
+        )
+    )
+) else (
+    echo ⚠️  Git fetch failed or not a git repository, continuing...
+)
 echo.
 
 REM Check if Python is installed
