@@ -5,7 +5,7 @@ echo ========================================
 echo.
 echo This will set up:
 echo 1. Auto-start server (no browser) with update checking
-echo 2. Scheduled data scraping at 10:30, 13:00, and 18:30
+echo 2. Scheduled data scraping at 10:30, 13:00, and 17:30
 echo.
 echo Press any key to continue or Ctrl+C to cancel...
 pause >nul
@@ -61,10 +61,10 @@ if %ERRORLEVEL%==0 (
     echo Deleted existing 13:00 task
 )
 
-schtasks /Query /TN %TASK_NAME_PREFIX%_1830 >NUL 2>&1
+schtasks /Query /TN %TASK_NAME_PREFIX%_1730 >NUL 2>&1
 if %ERRORLEVEL%==0 (
-    schtasks /Delete /TN %TASK_NAME_PREFIX%_1830 /F >NUL 2>&1
-    echo Deleted existing 18:30 task
+    schtasks /Delete /TN %TASK_NAME_PREFIX%_1730 /F >NUL 2>&1
+    echo Deleted existing 17:30 task
 )
 
 echo.
@@ -104,21 +104,21 @@ if %ERRORLEVEL% NEQ 0 (
     echo ✅ 13:00 PM task created successfully
 )
 
-REM Create 18:30 PM task (Weekdays only)
-echo Creating 18:30 PM task...
+REM Create 17:30 PM task (Weekdays only)
+echo Creating 17:30 PM task...
 schtasks /Create ^
-  /TN %TASK_NAME_PREFIX%_1830 ^
+  /TN %TASK_NAME_PREFIX%_1730 ^
   /TR "\"%SCRIPT_PATH%\"" ^
   /SC WEEKLY ^
   /D MON,TUE,WED,THU,FRI ^
-  /ST 18:30 ^
+  /ST 17:30 ^
   /RL LIMITED >NUL 2>&1
 
 if %ERRORLEVEL% NEQ 0 (
-    echo ❌ Failed to create 18:30 PM task
+    echo ❌ Failed to create 17:30 PM task
     set "TASK_ERROR=1"
 ) else (
-    echo ✅ 18:30 PM task created successfully
+    echo ✅ 17:30 PM task created successfully
 )
 
 echo.
@@ -156,7 +156,7 @@ echo.
 echo ⏰ Scheduled Data Scraping:
 echo - 10:30 AM (Monday-Friday)
 echo - 13:00 PM (Monday-Friday)
-echo - 18:30 PM (Monday-Friday)
+echo - 17:30 PM (Monday-Friday)
 echo.
 echo 📊 Manual Controls:
 echo - Start server: Double-click start.bat
@@ -172,7 +172,7 @@ echo - Auto-start: Delete shortcut from startup folder
 echo - Scheduled tasks: 
 echo   schtasks /Delete /TN SET_Scraper_1030 /F
 echo   schtasks /Delete /TN SET_Scraper_1300 /F
-echo   schtasks /Delete /TN SET_Scraper_1830 /F
+echo   schtasks /Delete /TN SET_Scraper_1730 /F
 echo.
 echo ========================================
 echo Setup complete! Press any key to exit...
