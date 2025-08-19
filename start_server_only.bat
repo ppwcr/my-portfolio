@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-echo Starting Portfolio Dashboard with Database Update...
+echo Starting Portfolio Dashboard Server (No Browser)...
 echo.
 echo This will start the server on http://127.0.0.1:8000
 echo Press Ctrl+C to stop the server
@@ -64,7 +64,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo Starting server with database update...
+echo Starting server...
 echo.
 echo The Portfolio Dashboard Server is now running!
 echo.
