@@ -82,7 +82,7 @@
             </div>
             <div class="flex gap-2 items-center">
                 <button id="refresh-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm">
-                    Refresh Data
+                    Run Fresh Scrape
                 </button>
                 <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm" title="Export My Portfolio table to CSV">
                     Export My Portfolio CSV
@@ -646,7 +646,7 @@
         // API functions
         async function fetchDashboardData() {
             try {
-                const response = await fetch('/api/portfolio/dashboard');
+                const response = await fetch(`/api/portfolio/dashboard?_t=${Date.now()}`);
                 const data = await response.json();
                 return data;
             } catch (error) {
@@ -668,7 +668,7 @@
 
         async function fetchSummaryData() {
             try {
-                const response = await fetch('/api/portfolio/summary');
+                const response = await fetch(`/api/portfolio/summary?_t=${Date.now()}`);
                 const data = await response.json();
                 return data;
             } catch (error) {
@@ -1758,24 +1758,40 @@
             // Export functionality
             document.getElementById('export-btn').addEventListener('click', exportCSV);
 
-            // Refresh functionality with progress bar
+            // Fresh scrape functionality with progress bar
             document.getElementById('refresh-btn').addEventListener('click', async (e) => {
                 const btn = e.currentTarget;
                 btn.disabled = true;
+                btn.textContent = 'Running Scrapers...';
                 const ctrl = startRefreshProgress();
                 try {
                     document.getElementById('loading-state').style.display = 'block';
                     document.getElementById('empty-state').style.display = 'none';
                     document.getElementById('portfolio-tbody').innerHTML = '';
                     
-                    // Refresh from database only (no database updates)
-                    await refreshFromDatabase();
-                    ctrl.finish(true);
+                    // Run Python scrapers to get fresh data
+                    console.log('🔄 Running fresh data scrape...');
+                    const response = await fetch('/api/save-to-database', { method: 'POST' });
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        console.log('✅ Fresh scrape completed:', result.message);
+                        // Wait a moment for database to be updated, then refresh display
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        await refreshFromDatabase();
+                        ctrl.finish(true);
+                    } else {
+                        console.error('❌ Fresh scrape failed:', result.message);
+                        ctrl.finish(false);
+                        alert(`Scrape failed: ${result.message}`);
+                    }
                 } catch (err) {
-                    console.error('Refresh failed:', err);
+                    console.error('Fresh scrape failed:', err);
                     ctrl.finish(false);
+                    alert('Scrape failed - check console for details');
                 } finally {
                     btn.disabled = false;
+                    btn.textContent = 'Run Fresh Scrape';
                 }
             });
 

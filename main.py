@@ -963,27 +963,136 @@ async def auto_update_database():
 
 @app.post("/api/save-to-database")
 async def save_to_database(download_fresh: bool = False):
-    """Manual data refresh - runs same scripts as server startup"""
-    print("🔄 Manual data refresh triggered...")
+    """Manual data refresh - runs Python scrapers in background and saves to database"""
+    print("🔄 Manual data refresh triggered - running Python scrapers...")
     
-    return JSONResponse(content={
-        "success": True,
-        "updated": True,
-        "message": "✅ Data is automatically refreshed on server startup",
-        "details": {
-            "nvdr_data": True,
-            "short_sales_data": True, 
-            "set_index_data": True,
-            "startup_system": True
-        },
-        "summary": {
-            "nvdr_data": "✅ NVDR Excel downloaded and saved (August 18th)",
-            "short_sales_data": "✅ Short Sales Excel downloaded and saved (August 18th)",
-            "set_index_data": "✅ SET index data scraped and saved"
-        },
-        "failed_components": [],
-        "trade_date": datetime.now().strftime("%Y-%m-%d")
-    })
+    try:
+        import subprocess
+        from datetime import datetime
+        from supabase_database import get_proper_db
+        import datetime as dt
+        
+        db = get_proper_db()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results = {
+            "nvdr_data": False,
+            "short_sales_data": False, 
+            "set_index_data": False,
+            "sector_data": False
+        }
+        
+        # 1. Download NVDR
+        print("📥 Manual refresh: Running NVDR download...")
+        result = subprocess.run([
+            sys.executable, "download_nvdr_excel.py", 
+            "--out", f"_out/nvdr_{timestamp}.xlsx", 
+            "--timeout", "90000"
+        ], capture_output=True, text=True, timeout=120)
+        
+        if result.returncode == 0:
+            print("✅ NVDR download completed")
+            # Save to database
+            nvdr_files = list(Path("_out").glob("nvdr_*.xlsx"))
+            if nvdr_files:
+                latest_nvdr = max(nvdr_files, key=lambda x: x.stat().st_mtime)
+                results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), None)
+                print("✅ NVDR data saved to database")
+        else:
+            print(f"❌ NVDR download failed: {result.stderr}")
+        
+        # 2. Download Short Sales
+        print("📥 Manual refresh: Running Short Sales download...")
+        result = subprocess.run([
+            sys.executable, "download_short_sales_excel.py",
+            "--out", f"_out/short_sales_{timestamp}.xlsx",
+            "--timeout", "90000"
+        ], capture_output=True, text=True, timeout=120)
+        
+        if result.returncode == 0:
+            print("✅ Short Sales download completed")
+            # Save to database
+            short_files = list(Path("_out").glob("short_sales_*.xlsx"))
+            if short_files:
+                latest_short = max(short_files, key=lambda x: x.stat().st_mtime)
+                results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), None)
+                print("✅ Short Sales data saved to database")
+        else:
+            print(f"❌ Short Sales download failed: {result.stderr}")
+        
+        # 3. Scrape SET index
+        print("📥 Manual refresh: Running SET index scraping...")
+        result = subprocess.run([
+            sys.executable, "scrape_set_index.py", "--save-db"
+        ], capture_output=True, text=True, timeout=60)
+        
+        if result.returncode == 0:
+            results["set_index_data"] = True
+            print("✅ SET index completed and saved")
+        else:
+            print(f"❌ SET index failed: {result.stderr}")
+        
+        # 4. Scrape sector data
+        print("📥 Manual refresh: Running sector data scraping...")
+        result = subprocess.run([
+            sys.executable, "scrape_sector_data.py", 
+            "--outdir", f"_out/sectors_{timestamp}"
+        ], capture_output=True, text=True, timeout=180)
+        
+        if result.returncode == 0:
+            print("✅ Sector data scraping completed")
+            # Save sector data to database
+            sector_dirs = list(Path("_out").glob("sectors_*"))
+            if sector_dirs:
+                latest_sectors = max(sector_dirs, key=lambda x: x.stat().st_mtime)
+                sector_trade_date = dt.date(2025, 8, 18)  # Use same date as Excel files
+                
+                sector_files = list(latest_sectors.glob("*.constituents.csv"))
+                saved_sectors = 0
+                for sector_file in sector_files:
+                    sector_name = sector_file.stem.replace('.constituents', '')
+                    try:
+                        import pandas as pd
+                        sector_df = pd.read_csv(sector_file)
+                        if db.save_sector_data(sector_df, sector_name, sector_trade_date):
+                            saved_sectors += 1
+                    except Exception as e:
+                        print(f"⚠️ Failed to save sector {sector_name}: {e}")
+                
+                results["sector_data"] = saved_sectors > 0
+                print(f"✅ Sector data saved to database ({saved_sectors} sectors)")
+        else:
+            print(f"❌ Sector scraping failed: {result.stderr}")
+        
+        # Calculate success rate
+        total_tasks = len(results)
+        successful_tasks = sum(1 for success in results.values() if success)
+        
+        return JSONResponse(content={
+            "success": successful_tasks > 0,
+            "updated": successful_tasks > 0,
+            "message": f"✅ Manual refresh completed: {successful_tasks}/{total_tasks} components successful",
+            "details": results,
+            "summary": {
+                "nvdr_data": "✅ Downloaded and saved" if results["nvdr_data"] else "❌ Failed",
+                "short_sales_data": "✅ Downloaded and saved" if results["short_sales_data"] else "❌ Failed",
+                "set_index_data": "✅ Scraped and saved" if results["set_index_data"] else "❌ Failed",
+                "sector_data": "✅ Scraped and saved" if results["sector_data"] else "❌ Failed"
+            },
+            "failed_components": [key for key, success in results.items() if not success],
+            "trade_date": datetime.now().strftime("%Y-%m-%d")
+        })
+        
+    except Exception as e:
+        print(f"❌ Manual refresh error: {e}")
+        return JSONResponse(content={
+            "success": False,
+            "updated": False,
+            "message": f"❌ Manual refresh failed: {str(e)}",
+            "details": {"error": str(e)},
+            "summary": {},
+            "failed_components": ["all"],
+            "trade_date": datetime.now().strftime("%Y-%m-%d")
+        }, status_code=500)
 
 @app.post("/api/save-to-database-old")  
 async def save_to_database_old(download_fresh: bool = False):
