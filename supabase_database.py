@@ -677,7 +677,7 @@ class ProperDatabaseManager:
             return {}
     
     def get_portfolio_holdings_with_persistence(self, trade_date: date) -> dict:
-        """Get portfolio holdings with CRUD timestamp logic - holdings persist until changed"""
+        """Get portfolio holdings with CRUD timestamp logic - holdings persist until changed - OPTIMIZED"""
         try:
             # Get all portfolio symbols
             portfolio_symbols = self.get_portfolio_symbols()
@@ -685,14 +685,19 @@ class ProperDatabaseManager:
                 print(f"📋 No portfolio symbols found")
                 return {}
             
-            holdings = {}
+            # OPTIMIZATION: Single query to get all holdings for all symbols at once
+            # Get all holdings for portfolio symbols on or before target date
+            result = self.client.table('portfolio_holdings').select('*').in_('symbol', portfolio_symbols).lte('trade_date', trade_date.isoformat()).order('symbol').order('trade_date', desc=True).execute()
             
-            # For each symbol, get the most recent holdings on or before the target date
-            for symbol in portfolio_symbols:
-                result = self.client.table('portfolio_holdings').select('*').eq('symbol', symbol).lte('trade_date', trade_date.isoformat()).order('trade_date', desc=True).limit(1).execute()
-                
-                if result.data and len(result.data) > 0:
-                    holding = result.data[0]
+            if not result.data:
+                print(f"📋 No portfolio holdings found for any symbols")
+                return {}
+            
+            # Group by symbol and take the most recent (first) holding for each symbol
+            holdings = {}
+            for holding in result.data:
+                symbol = holding['symbol']
+                if symbol not in holdings:  # First (most recent) holding for this symbol
                     holdings[symbol] = {
                         'quantity': holding['quantity'],
                         'avg_cost_price': holding['avg_cost_price'],
@@ -700,9 +705,7 @@ class ProperDatabaseManager:
                         'effective_date': holding['trade_date']  # Track when this holding was set
                     }
             
-            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date} (with persistence)")
-            if holdings:
-                print(f"🔄 Holdings effective dates: {[(symbol, data['effective_date']) for symbol, data in holdings.items()]}")
+            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date} (with persistence, optimized)")
             
             return holdings
             

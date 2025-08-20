@@ -724,36 +724,52 @@
         }
 
         async function fetchSummaryData(dashboardData) {
-            // Calculate summary from dashboard data instead of calling broken API endpoint
-            if (!dashboardData || !dashboardData.portfolio_stocks) {
-                console.error('No dashboard data available for summary calculation');
-                return null;
-            }
-            
+            // Use the dedicated summary API endpoint that has proper fallback logic
             try {
-                const stocks = dashboardData.portfolio_stocks;
+                const response = await fetch('/api/portfolio/summary', {
+                    cache: 'no-cache',
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
                 
-                // Calculate totals
-                const totalSymbols = stocks.length;
-                const totalNvdr = stocks.reduce((sum, stock) => sum + (stock.nvdr || 0), 0);
-                const totalShort = stocks.reduce((sum, stock) => sum + (stock.shortBaht || 0), 0);
+                if (!response.ok) {
+                    throw new Error(`Summary API returned ${response.status}`);
+                }
                 
-                // Calculate average price (excluding 0 prices)
-                const validPrices = stocks.map(s => s.close).filter(price => price > 0);
-                const avgPrice = validPrices.length > 0 ? 
-                    validPrices.reduce((sum, price) => sum + price, 0) / validPrices.length : 0;
+                const summaryData = await response.json();
+                console.log(`📊 Summary from API: ${summaryData.total_symbols} symbols, NVDR: ${summaryData.total_nvdr_mb}M, Short: ${summaryData.total_short_mb}M`);
                 
-                console.log(`📊 Summary calculated: ${totalSymbols} stocks, NVDR: ${(totalNvdr/1000000).toFixed(1)}M, Short: ${(totalShort/1000000).toFixed(1)}M`);
-                
-                return {
-                    trade_date: dashboardData.trade_date,
-                    total_symbols: totalSymbols,
-                    avg_price: parseFloat(avgPrice.toFixed(2)),
-                    total_nvdr_mb: parseFloat((totalNvdr / 1000000).toFixed(2)),
-                    total_short_mb: parseFloat((totalShort / 1000000).toFixed(2))
-                };
+                return summaryData;
             } catch (error) {
-                console.error('Error calculating summary data:', error);
+                console.error('Error fetching summary data:', error);
+                
+                // Fallback to calculating from dashboard data if API fails
+                if (dashboardData && dashboardData.portfolio_stocks) {
+                    try {
+                        const stocks = dashboardData.portfolio_stocks;
+                        const totalSymbols = stocks.length;
+                        const totalNvdr = stocks.reduce((sum, stock) => sum + (stock.nvdr || 0), 0);
+                        const totalShort = stocks.reduce((sum, stock) => sum + (stock.shortBaht || 0), 0);
+                        const validPrices = stocks.map(s => s.close).filter(price => price > 0);
+                        const avgPrice = validPrices.length > 0 ? 
+                            validPrices.reduce((sum, price) => sum + price, 0) / validPrices.length : 0;
+                        
+                        console.log(`📊 Summary fallback: ${totalSymbols} stocks, NVDR: ${(totalNvdr/1000000).toFixed(1)}M, Short: ${(totalShort/1000000).toFixed(1)}M`);
+                        
+                        return {
+                            trade_date: dashboardData.trade_date,
+                            total_symbols: totalSymbols,
+                            avg_price: parseFloat(avgPrice.toFixed(2)),
+                            total_nvdr_mb: parseFloat((totalNvdr / 1000000).toFixed(2)),
+                            total_short_mb: parseFloat((totalShort / 1000000).toFixed(2))
+                        };
+                    } catch (fallbackError) {
+                        console.error('Error in summary fallback calculation:', fallbackError);
+                        return null;
+                    }
+                }
+                
                 return null;
             }
         }
@@ -785,7 +801,6 @@
                     if (portfolioData) {
                         myPortfolioData = portfolioData.portfolio_stocks || [];
                         portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
-                        
                         // Only render the portfolio table, charts will be handled by renderMyPortfolio
                         renderMyPortfolio(myPortfolioData);
                     }
@@ -822,7 +837,6 @@
                     if (portfolioData) {
                         myPortfolioData = portfolioData.portfolio_stocks || [];
                         portfolioSymbols = new Set(portfolioData.portfolio_symbols || []);
-                        
                         // Only render the portfolio table, charts will be handled by renderMyPortfolio
                         renderMyPortfolio(myPortfolioData);
                     }
@@ -948,13 +962,26 @@
             `;
         }
 
-        function renderInvestorSummary(investorData) {
+        function renderInvestorSummary(investorData, dateDates) {
             const section = document.getElementById('investor-section');
             const tbody = document.getElementById('investor-tbody');
 
             if (!investorData || investorData.length === 0) {
                 section.style.display = 'none';
                 return;
+            }
+
+            // Update header titles with actual dates if available
+            if (dateDates && dateDates.investor) {
+                const headerTitle = section.querySelector('h2');
+                if (headerTitle) {
+                    headerTitle.textContent = `Investor Summary - ${dateDates.investor}`;
+                }
+                
+                const dailyHeader = section.querySelector('th[colspan="5"].bg-blue-50');
+                if (dailyHeader) {
+                    dailyHeader.textContent = `Daily (${dateDates.investor})`;
+                }
             }
 
             // Group by investor type (in case there are duplicates, take the latest)
@@ -1899,7 +1926,7 @@
 
             // Render all sections
             renderSummaryCards(summaryData);
-            renderInvestorSummary(dashboardData.investor_summary);
+            renderInvestorSummary(dashboardData.investor_summary, dashboardData.data_dates);
             
             // Portfolio will be loaded separately by date
             
@@ -2570,11 +2597,10 @@
                     // Update UI to show today's status
                     updateDateStatus(today);
                     
-                    // Load portfolio data for today (with persistence from previous dates)
-                    await loadPortfolioForDate(today);
-                    
-                    // Also refresh All Symbols table for today's date
+                    // First refresh All Symbols table for today's date (provides market data)
                     await refreshAllSymbolsForDate(today);
+                    // Then load portfolio by joining holdings with the already loaded market data
+                    await loadPortfolioForDate(today);
                     
                     // Set min and max dates (last 90 days)
                     const todayDate = new Date();
@@ -2692,28 +2718,27 @@
                 const loadingState = document.getElementById('my-portfolio-loading');
                 const emptyState = document.getElementById('my-portfolio-empty');
                 const tbody = document.getElementById('my-portfolio-tbody');
-                
                 loadingState.style.display = 'block';
                 emptyState.style.display = 'none';
                 tbody.innerHTML = '';
-                
+
                 const response = await fetch(`/api/portfolio/holdings?trade_date=${date}`);
                 const data = await response.json();
-                
+
                 // Hide loading state
                 loadingState.style.display = 'none';
-                
+
                 if (data.success) {
                     myPortfolioData = data.portfolio_data || [];
                     renderMyPortfolio(myPortfolioData);
-                    
+
                     // Update portfolio data info
                     const portfolioDataInfoEl = document.getElementById('portfolio-data-info');
                     if (portfolioDataInfoEl) {
                         if (data.data_dates) {
                             const dateDates = data.data_dates;
                             const differentDates = [];
-                            
+
                             if (dateDates.nvdr && dateDates.nvdr !== data.market_date) {
                                 differentDates.push(`NVDR: ${dateDates.nvdr}`);
                             }
@@ -2730,7 +2755,7 @@
                                     differentDates.push(`Short Sales: ${dateDates.short_sales}`);
                                 }
                             }
-                            
+
                             let infoText = `Data from ${data.market_date}`;
                             if (differentDates.length > 0) {
                                 infoText += ` (${differentDates.join(', ')})`;
@@ -2740,7 +2765,7 @@
                             portfolioDataInfoEl.textContent = `Data from ${data.market_date}`;
                         }
                     }
-                    
+
                     // Update main trade date display if we have market data
                     if (data.market_date) {
                         const tradeDateEl = document.getElementById('trade-date');
@@ -2749,13 +2774,12 @@
                         }
                     }
                 } else {
-                    console.error('Error loading portfolio:', data);
-                    // Show empty state on error
+                    myPortfolioData = [];
+                    renderMyPortfolio(myPortfolioData);
                     emptyState.style.display = 'block';
                 }
             } catch (error) {
-                console.error('Error loading portfolio:', error);
-                // Hide loading state and show empty state on error
+                console.error('Error loading portfolio (join):', error);
                 document.getElementById('my-portfolio-loading').style.display = 'none';
                 document.getElementById('my-portfolio-empty').style.display = 'block';
             }
@@ -2798,11 +2822,9 @@
                 // Update status based on availability
                 updateDateStatus(selectedDate);
                 
-                // Load portfolio holdings for the selected date
-                loadPortfolioForDate(currentPortfolioDate);
-                
-                // Also refresh the All Symbols table with data for the selected date
+                // Refresh the All Symbols table first, then build portfolio from it
                 await refreshAllSymbolsForDate(selectedDate);
+                await loadPortfolioForDate(currentPortfolioDate);
             });
 
             // Search functionality
@@ -2827,6 +2849,8 @@
             }
 
             // SET index chart initialization moved to renderSetIndexChart() function called from initDashboard()
+
+            // No portfolio-only toggle; portfolio has its own section
 
             // Sort functionality
             document.querySelectorAll('.sortable').forEach(el => {
@@ -2878,10 +2902,13 @@
             // Note: Database auto-updates on PC startup only
 
 
-            // Refresh portfolio functionality
-            document.getElementById('refresh-portfolio-btn').addEventListener('click', () => {
-                refreshMyPortfolio();
-            });
+            // Refresh portfolio functionality (section hidden; guard for null)
+            const refreshPortfolioBtn = document.getElementById('refresh-portfolio-btn');
+            if (refreshPortfolioBtn) {
+                refreshPortfolioBtn.addEventListener('click', () => {
+                    refreshMyPortfolio();
+                });
+            }
 
             // Refresh SET index functionality
             document.getElementById('refresh-index-btn').addEventListener('click', async () => {

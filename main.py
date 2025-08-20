@@ -1783,7 +1783,6 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
         if trade_date:
             # Use the specified date for all data types
             target_trade_date = trade_date
-            print(f"📅 Using specified trade date: {target_trade_date}")
         else:
             # Get latest trade dates for each data type independently
             latest_dates = {}
@@ -1821,15 +1820,16 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                 latest_dates['short'] = None
             
             # Use the most recent date across all data types for display
-            target_trade_date = max([d for d in latest_dates.values() if d is not None], default=None)
-            print(f"📅 Using latest available trade date: {target_trade_date}")
+            available_dates = [d for d in latest_dates.values() if d is not None]
+            target_trade_date = max(available_dates) if available_dates else None
         
         latest_trade_date = target_trade_date
         
-        # Get investor summary data using the target date
+        # Get investor summary data using the latest available investor date
         investor_summary = []
-        if target_trade_date:
-            investor_result = db.client.table('investor_summary').select('*').eq('trade_date', target_trade_date).order('created_at', desc=True).execute()
+        investor_date_to_use = latest_dates.get('investor') if not trade_date else target_trade_date
+        if investor_date_to_use:
+            investor_result = db.client.table('investor_summary').select('*').eq('trade_date', investor_date_to_use).order('created_at', desc=True).execute()
             
             # Get unique investor types (latest entry for each type)
             seen_types = set()
@@ -1850,10 +1850,11 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
             
             investor_summary = sorted(unique_investors, key=get_sort_key)
         
-        # Get sector summary using the target date
+        # Get sector summary using the latest available sector date
         sector_summary = []
-        if target_trade_date:
-            sector_result = db.client.table('sector_data').select('sector, last_price, symbol').eq('trade_date', target_trade_date).execute()
+        sector_date_to_use = latest_dates.get('sector') if not trade_date else target_trade_date
+        if sector_date_to_use:
+            sector_result = db.client.table('sector_data').select('sector, last_price, symbol').eq('trade_date', sector_date_to_use).execute()
             sector_data = sector_result.data if sector_result.data else []
             
             # Group by sector
@@ -1877,11 +1878,35 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                     'avg_price': round(avg_price, 2)
                 })
         
-        # Get individual stock data using the target date
+        # Get NVDR data using the latest available NVDR date (optimize by doing this once)
+        nvdr_data = {}
+        nvdr_date = None
+        try:
+            nvdr_date_to_use = latest_dates.get('nvdr') if not trade_date else target_trade_date
+            if nvdr_date_to_use:
+                nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', nvdr_date_to_use).execute()
+                nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+                nvdr_date = nvdr_date_to_use
+        except Exception as e:
+            pass
+        
+        # Get Short Sales data using the latest available Short Sales date (optimize by doing this once)
+        short_data = {}
+        short_date = None
+        try:
+            short_date_to_use = latest_dates.get('short') if not trade_date else target_trade_date
+            if short_date_to_use:
+                short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', short_date_to_use).execute()
+                short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+                short_date = short_date_to_use
+        except Exception as e:
+            pass
+        
+        # Get individual stock data using the sector date
         portfolio_stocks = []
-        if target_trade_date:
-            # Get all stocks with prices from sector_data using the target date
-            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_trade_date).execute()
+        if sector_date_to_use:
+            # Get all stocks with prices from sector_data using the sector date
+            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', sector_date_to_use).execute()
             
             # Clean the data to prevent JSON compliance issues
             stocks_data = {}
@@ -1906,36 +1931,6 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                         }
                         stocks_data[item['symbol']] = cleaned_item
                         
-                print(f"📊 DEBUG: Total sector records: {total_records}, NULL prices: {null_price_count}, Valid prices: {valid_price_count}")
-            print(f"📊 DEBUG: Found {len(stocks_data)} stocks in sector_data for date {target_trade_date}")
-            if 'GRAND' in stocks_data:
-                print(f"✅ DEBUG: GRAND found in sector_data: {stocks_data['GRAND']}")
-            else:
-                print(f"❌ DEBUG: GRAND NOT found in sector_data")
-            
-            # Get NVDR data using the latest available NVDR date
-            nvdr_data = {}
-            try:
-                nvdr_latest_result = db.client.table('nvdr_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if nvdr_latest_result.data:
-                    nvdr_date = nvdr_latest_result.data[0]['trade_date']
-                    nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', nvdr_date).execute()
-                    nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
-                    print(f"📈 Using NVDR data from: {nvdr_date}")
-            except Exception as e:
-                print(f"⚠️ Error getting NVDR data: {e}")
-            
-            # Get Short Sales data using the latest available Short Sales date
-            short_data = {}
-            try:
-                short_latest_result = db.client.table('short_sales_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if short_latest_result.data:
-                    short_date = short_latest_result.data[0]['trade_date']
-                    short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', short_date).execute()
-                    short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
-                    print(f"📉 Using Short Sales data from: {short_date}")
-            except Exception as e:
-                print(f"⚠️ Error getting Short Sales data: {e}")
             
             # Only include symbols that have sector data (price information)
             # This prevents JSON compliance issues with symbols that only have NVDR/short data
@@ -1963,11 +1958,9 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                         # Check for invalid float values
                         import math
                         if math.isnan(result) or math.isinf(result):
-                            print(f"⚠️  DEBUG: parse_change found invalid value: '{value}' -> '{cleaned}' -> {result}")
                             return 0
                         return result
                     except (ValueError, TypeError) as e:
-                        print(f"⚠️  DEBUG: parse_change error with '{value}': {e}")
                         return 0
                 
                 def parse_percent(value):
@@ -1982,11 +1975,9 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                         # Check for invalid float values
                         import math
                         if math.isnan(result) or math.isinf(result):
-                            print(f"⚠️  DEBUG: parse_percent found invalid value: '{value}' -> '{cleaned}' -> {result}")
                             return 0
                         return result
                     except (ValueError, TypeError) as e:
-                        print(f"⚠️  DEBUG: parse_percent error with '{value}': {e}")
                         return 0
                 
                 portfolio_stocks.append({
@@ -2012,14 +2003,12 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
             if isinstance(data, dict):
                 for key, value in data.items():
                     if not validate_json_data(value, f"{path}.{key}"):
-                        print(f"❌ JSON compliance error at {path}.{key}: {value} ({type(value)})")
                         return False
             elif isinstance(data, list):
                 for i, item in enumerate(data):
                     if not validate_json_data(item, f"{path}[{i}]"):
                         return False
             elif not is_json_safe(data):
-                print(f"❌ JSON compliance error at {path}: {data} ({type(data)})")
                 return False
             return True
         
@@ -2038,7 +2027,6 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
         
         # Validate before returning
         if not validate_json_data(response_data):
-            print("❌ Dashboard response contains non-JSON compliant data")
             # Return a safe fallback response
             return JSONResponse(content={
                 'trade_date': latest_trade_date,
@@ -2420,49 +2408,71 @@ async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
         nvdr_dates_used = {}
         short_dates_used = {}
         
-        # Get market data for all portfolio symbols using the specified date
+        # OPTIMIZED: Batch queries to get all data at once instead of N+1 queries
+        
+        # 1. Get ALL stock data for portfolio symbols in one query
+        stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+        
+        # 2. Get ALL NVDR data for target date in one query
+        nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net, trade_date').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        nvdr_data_exact = {item['symbol']: item for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+        
+        # 3. Get ALL latest NVDR data for symbols missing exact date data in one query
+        missing_nvdr_symbols = [s for s in portfolio_symbols if s not in nvdr_data_exact]
+        nvdr_data_fallback = {}
+        if missing_nvdr_symbols:
+            # Get the latest NVDR data for each missing symbol
+            for symbol in missing_nvdr_symbols:
+                try:
+                    nvdr_latest = db.client.table('nvdr_trading').select('value_net, trade_date').eq('symbol', symbol).order('trade_date', desc=True).limit(1).execute()
+                    if nvdr_latest.data and nvdr_latest.data[0]['value_net'] is not None:
+                        nvdr_data_fallback[symbol] = nvdr_latest.data[0]
+                except:
+                    pass
+        
+        # 4. Get ALL Short Sales data for target date in one query
+        short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht, trade_date').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        short_data_exact = {item['symbol']: item for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+        
+        # 5. Get ALL latest Short Sales data for symbols missing exact date data
+        missing_short_symbols = [s for s in portfolio_symbols if s not in short_data_exact]
+        short_data_fallback = {}
+        if missing_short_symbols:
+            for symbol in missing_short_symbols:
+                try:
+                    short_latest = db.client.table('short_sales_trading').select('short_value_baht, trade_date').eq('symbol', symbol).order('trade_date', desc=True).limit(1).execute()
+                    if short_latest.data and short_latest.data[0]['short_value_baht'] is not None:
+                        short_data_fallback[symbol] = short_latest.data[0]
+                except:
+                    pass
+        
+        # Now process each symbol using the batched data
         for symbol in portfolio_symbols:
-            # Get stock data for the specified date
-            stock_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).eq('symbol', symbol).execute()
-            stock_data = stock_result.data[0] if stock_result.data else {}
+            # Get stock data
+            stock_data = stocks_data.get(symbol, {})
             
-            # Get NVDR data - use latest available if target date doesn't have data
+            # Get NVDR data (exact date first, then fallback)
             nvdr_value = 0
             nvdr_date_used = target_date
-            try:
-                # First try the target date
-                nvdr_result = db.client.table('nvdr_trading').select('value_net, trade_date').eq('trade_date', target_date).eq('symbol', symbol).execute()
-                if nvdr_result.data and nvdr_result.data[0]['value_net'] is not None:
-                    nvdr_value = nvdr_result.data[0]['value_net']
-                    nvdr_date_used = nvdr_result.data[0]['trade_date']
-                else:
-                    # If no data for target date, use the latest available for this symbol
-                    nvdr_latest_result = db.client.table('nvdr_trading').select('value_net, trade_date').eq('symbol', symbol).order('trade_date', desc=True).limit(1).execute()
-                    if nvdr_latest_result.data and nvdr_latest_result.data[0]['value_net'] is not None:
-                        nvdr_value = nvdr_latest_result.data[0]['value_net']
-                        nvdr_date_used = nvdr_latest_result.data[0]['trade_date']
-                nvdr_dates_used[symbol] = nvdr_date_used
-            except Exception as e:
-                print(f"⚠️ Error getting NVDR for {symbol} on {target_date}: {e}")
+            if symbol in nvdr_data_exact:
+                nvdr_value = nvdr_data_exact[symbol]['value_net']
+                nvdr_date_used = nvdr_data_exact[symbol]['trade_date']
+            elif symbol in nvdr_data_fallback:
+                nvdr_value = nvdr_data_fallback[symbol]['value_net']
+                nvdr_date_used = nvdr_data_fallback[symbol]['trade_date']
+            nvdr_dates_used[symbol] = nvdr_date_used
             
-            # Get Short Sales data - use latest available if target date doesn't have data
+            # Get Short Sales data (exact date first, then fallback)
             short_value = 0
             short_date_used = target_date
-            try:
-                # First try the target date
-                short_result = db.client.table('short_sales_trading').select('short_value_baht, trade_date').eq('trade_date', target_date).eq('symbol', symbol).execute()
-                if short_result.data and short_result.data[0]['short_value_baht'] is not None:
-                    short_value = short_result.data[0]['short_value_baht']
-                    short_date_used = short_result.data[0]['trade_date']
-                else:
-                    # If no data for target date, use the latest available for this symbol
-                    short_latest_result = db.client.table('short_sales_trading').select('short_value_baht, trade_date').eq('symbol', symbol).order('trade_date', desc=True).limit(1).execute()
-                    if short_latest_result.data and short_latest_result.data[0]['short_value_baht'] is not None:
-                        short_value = short_latest_result.data[0]['short_value_baht']
-                        short_date_used = short_latest_result.data[0]['trade_date']
-                short_dates_used[symbol] = short_date_used
-            except Exception as e:
-                print(f"⚠️ Error getting Short Sales for {symbol} on {target_date}: {e}")
+            if symbol in short_data_exact:
+                short_value = short_data_exact[symbol]['short_value_baht']
+                short_date_used = short_data_exact[symbol]['trade_date']
+            elif symbol in short_data_fallback:
+                short_value = short_data_fallback[symbol]['short_value_baht']
+                short_date_used = short_data_fallback[symbol]['trade_date']
+            short_dates_used[symbol] = short_date_used
             
             # Get holding data for this symbol and date
             holding = holdings.get(symbol, {})
@@ -2528,6 +2538,8 @@ async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting portfolio holdings: {str(e)}")
+
+
 
 
 @app.post("/api/portfolio/save-holding")
@@ -2618,27 +2630,28 @@ async def export_portfolio_csv(portfolio_date: str = None):
         portfolio_symbols = db.get_portfolio_symbols()
         holdings = []
         
-        # Get market data for all portfolio symbols using the specified date
+        # OPTIMIZED: Batch queries for CSV export
+        
+        # 1. Get ALL stock data for portfolio symbols in one query
+        stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+        
+        # 2. Get ALL NVDR data for the specified date in one query
+        nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+        
+        # 3. Get ALL Short Sales data for the specified date in one query
+        short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
+        short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+        
+        # Now process each symbol using the batched data
         for symbol in portfolio_symbols:
-            # Get stock data for the specified date
-            stock_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).eq('symbol', symbol).execute()
-            stock_data = stock_result.data[0] if stock_result.data else {}
+            # Get stock data
+            stock_data = stocks_data.get(symbol, {})
             
-            # Get NVDR data for the specified date (not latest date)
-            nvdr_value = 0
-            try:
-                nvdr_result = db.client.table('nvdr_trading').select('value_net').eq('trade_date', target_date).eq('symbol', symbol).execute()
-                nvdr_value = nvdr_result.data[0]['value_net'] if nvdr_result.data else 0
-            except Exception as e:
-                print(f"⚠️ Error getting NVDR for {symbol} on {target_date}: {e}")
-            
-            # Get Short Sales data for the specified date (not latest date)
-            short_value = 0
-            try:
-                short_result = db.client.table('short_sales_trading').select('short_value_baht').eq('trade_date', target_date).eq('symbol', symbol).execute()
-                short_value = short_result.data[0]['short_value_baht'] if short_result.data else 0
-            except Exception as e:
-                print(f"⚠️ Error getting Short Sales for {symbol} on {target_date}: {e}")
+            # Get NVDR and Short Sales data
+            nvdr_value = nvdr_data.get(symbol, 0)
+            short_value = short_data.get(symbol, 0)
             
             # Get holding data for this symbol and date
             holding = raw_holdings.get(symbol, {})
