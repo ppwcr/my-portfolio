@@ -303,21 +303,21 @@ class ProperDatabaseManager:
             records = []
             grand_found = False
             for _, row in csv_data.iterrows():
-                symbol = str(row.get('Symbol', '')).strip()
-                last_price = self._parse_number(row.get('Last', ''))
+                symbol = str(row['Symbol'] if 'Symbol' in row else '').strip()
+                last_price = self._parse_number(row['Last'] if 'Last' in row else '')
                 
                 record = {
                     'symbol': symbol,
-                    'open_price': self._parse_number(row.get('Open', '')),
-                    'high_price': self._parse_number(row.get('High', '')),
-                    'low_price': self._parse_number(row.get('Low', '')),
+                    'open_price': self._parse_number(row['Open'] if 'Open' in row else ''),
+                    'high_price': self._parse_number(row['High'] if 'High' in row else ''),
+                    'low_price': self._parse_number(row['Low'] if 'Low' in row else ''),
                     'last_price': last_price,
-                    'change': str(row.get('Change', '')),
-                    'percent_change': str(row.get('% Change', '')),
-                    'bid': str(row.get('Bid', '')),
-                    'offer': str(row.get('Offer', '')),
-                    'volume_shares': self._parse_integer(row.get('Volume (Shares)', '')),
-                    'value_baht': self._parse_number(row.get('Value (\'000 Baht)', '')),
+                    'change': str(row['Change'] if 'Change' in row else ''),
+                    'percent_change': str(row['% Change'] if '% Change' in row else ''),
+                    'bid': str(row['Bid'] if 'Bid' in row else ''),
+                    'offer': str(row['Offer'] if 'Offer' in row else ''),
+                    'volume_shares': self._parse_integer(row['Volume (Shares)'] if 'Volume (Shares)' in row else ''),
+                    'value_baht': self._parse_number(row['Value (\'000 Baht)'] if 'Value (\'000 Baht)' in row else ''),
                     'sector': sector_name,
                     'trade_date': trade_date.isoformat() if trade_date else None,
                     'created_at': datetime.now().isoformat()
@@ -544,16 +544,32 @@ class ProperDatabaseManager:
                 print(f"❌ Error adding {symbol} to portfolio: {e}")
             return False
     
-    def remove_portfolio_symbol(self, symbol: str) -> bool:
-        """Remove a symbol from user's portfolio"""
+    def remove_portfolio_symbol(self, symbol: str) -> dict:
+        """Remove a symbol from user's portfolio - returns dict with success status and message"""
         try:
-            result = self.client.table('portfolio_symbols').delete().eq('symbol', symbol.upper().strip()).execute()
-            print(f"✅ Removed {symbol} from portfolio")
-            return True
+            symbol_upper = symbol.upper().strip()
+            
+            # Check if symbol has any holdings in portfolio_holdings table
+            holdings_result = self.client.table('portfolio_holdings').select('trade_date, quantity').eq('symbol', symbol_upper).execute()
+            
+            if holdings_result.data:
+                # Found holdings - prevent deletion
+                total_holdings = sum(holding['quantity'] for holding in holdings_result.data if holding['quantity'] > 0)
+                if total_holdings > 0:
+                    dates_with_holdings = [holding['trade_date'] for holding in holdings_result.data if holding['quantity'] > 0]
+                    return {
+                        'success': False,
+                        'error': f"Cannot remove {symbol} - it has {total_holdings} shares across {len(dates_with_holdings)} dates. Please sell all shares first."
+                    }
+            
+            # No holdings found, safe to remove
+            result = self.client.table('portfolio_symbols').delete().eq('symbol', symbol_upper).execute()
+            print(f"✅ Removed {symbol} from portfolio (no holdings found)")
+            return {'success': True, 'message': f"Removed {symbol} from portfolio"}
             
         except Exception as e:
             print(f"❌ Error removing {symbol} from portfolio: {e}")
-            return False
+            return {'success': False, 'error': f"Database error: {str(e)}"}
     
     def get_portfolio_symbols(self) -> list:
         """Get all symbols in user's portfolio sorted A-Z"""
@@ -640,7 +656,7 @@ class ProperDatabaseManager:
             return False
     
     def get_portfolio_holdings(self, trade_date: date) -> dict:
-        """Get portfolio holdings for a specific date"""
+        """Get portfolio holdings for a specific date - EXACT date match only"""
         try:
             result = self.client.table('portfolio_holdings').select('*').eq('trade_date', trade_date.isoformat()).order('symbol', desc=False).execute()
             
@@ -653,11 +669,45 @@ class ProperDatabaseManager:
                         'cost': holding['cost']
                     }
             
-            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date}")
+            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date} (exact date)")
             return holdings
             
         except Exception as e:
             print(f"❌ Error retrieving portfolio holdings: {e}")
+            return {}
+    
+    def get_portfolio_holdings_with_persistence(self, trade_date: date) -> dict:
+        """Get portfolio holdings with CRUD timestamp logic - holdings persist until changed"""
+        try:
+            # Get all portfolio symbols
+            portfolio_symbols = self.get_portfolio_symbols()
+            if not portfolio_symbols:
+                print(f"📋 No portfolio symbols found")
+                return {}
+            
+            holdings = {}
+            
+            # For each symbol, get the most recent holdings on or before the target date
+            for symbol in portfolio_symbols:
+                result = self.client.table('portfolio_holdings').select('*').eq('symbol', symbol).lte('trade_date', trade_date.isoformat()).order('trade_date', desc=True).limit(1).execute()
+                
+                if result.data and len(result.data) > 0:
+                    holding = result.data[0]
+                    holdings[symbol] = {
+                        'quantity': holding['quantity'],
+                        'avg_cost_price': holding['avg_cost_price'],
+                        'cost': holding['cost'],
+                        'effective_date': holding['trade_date']  # Track when this holding was set
+                    }
+            
+            print(f"📋 Retrieved {len(holdings)} portfolio holdings for {trade_date} (with persistence)")
+            if holdings:
+                print(f"🔄 Holdings effective dates: {[(symbol, data['effective_date']) for symbol, data in holdings.items()]}")
+            
+            return holdings
+            
+        except Exception as e:
+            print(f"❌ Error retrieving portfolio holdings with persistence: {e}")
             return {}
     
     def get_available_portfolio_dates(self) -> list:

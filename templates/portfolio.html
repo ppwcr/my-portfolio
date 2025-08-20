@@ -69,6 +69,30 @@
             height: 32px;
             border-radius: 4px;
         }
+        
+        /* Date picker styles */
+        #portfolio-date-picker.date-unavailable {
+            background-color: #f3f4f6;
+            color: #9ca3af;
+            border-color: #d1d5db;
+        }
+        
+        #portfolio-date-picker.date-available {
+            background-color: #ecfdf5;
+            border-color: #10b981;
+        }
+        
+        #date-status.available {
+            color: #10b981;
+        }
+        
+        #date-status.unavailable {
+            color: #ef4444;
+        }
+        
+        #date-status.today {
+            color: #3b82f6;
+        }
     </style>
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-100 to-slate-200 text-slate-900">
@@ -219,13 +243,18 @@
         <section class="bg-white/80 rounded-2xl shadow">
             <div class="p-4 border-b">
                 <div class="flex items-center justify-between">
-                    <h2 class="text-lg font-semibold">My Portfolio</h2>
+                    <div>
+                        <h2 class="text-lg font-semibold">My Portfolio</h2>
+                        <p id="portfolio-data-info" class="text-xs opacity-60 mt-1"></p>
+                    </div>
                     <div class="flex gap-2 items-center">
-                        <div class="flex items-center gap-2">
-                            <label for="portfolio-date-select" class="text-sm opacity-70">Date:</label>
-                            <select id="portfolio-date-select" class="px-2 py-1 rounded border text-sm bg-white">
-                                <option value="">Loading...</option>
-                            </select>
+                        <div class="flex items-center gap-2 relative">
+                            <label for="portfolio-date-picker" class="text-sm opacity-70">Date:</label>
+                            <input type="date" 
+                                   id="portfolio-date-picker" 
+                                   class="px-2 py-1 rounded border text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" 
+                                   title="Select date to view portfolio holdings">
+                            <div id="date-status" class="text-xs opacity-60 ml-1"></div>
                         </div>
                         <button id="edit-mode-toggle" class="px-3 py-1 rounded-lg shadow text-sm border" onclick="toggleEditMode()">
                             <span id="edit-mode-text">✏️ Edit Mode</span>
@@ -264,6 +293,13 @@
                         <!-- My portfolio data will be populated here -->
                     </tbody>
                 </table>
+                
+                <!-- Loading state for My Portfolio -->
+                <div id="my-portfolio-loading" class="py-12 text-center text-slate-500" style="display: none;">
+                    <div class="mb-2">⏳</div>
+                    <div>Loading portfolio data...</div>
+                    <div class="text-xs mt-1">Please wait while we fetch data for the selected date</div>
+                </div>
                 
                 <!-- Empty state for My Portfolio -->
                 <div id="my-portfolio-empty" class="py-12 text-center text-slate-500">
@@ -661,9 +697,13 @@
         }
 
         // API functions
-        async function fetchDashboardData() {
+        async function fetchDashboardData(tradeDate = null) {
             try {
-                const response = await fetch(`/api/portfolio/dashboard?_t=${Date.now()}`);
+                let url = `/api/portfolio/dashboard?_t=${Date.now()}`;
+                if (tradeDate) {
+                    url += `&trade_date=${tradeDate}`;
+                }
+                const response = await fetch(url);
                 const data = await response.json();
                 return data;
             } catch (error) {
@@ -683,13 +723,37 @@
             }
         }
 
-        async function fetchSummaryData() {
+        async function fetchSummaryData(dashboardData) {
+            // Calculate summary from dashboard data instead of calling broken API endpoint
+            if (!dashboardData || !dashboardData.portfolio_stocks) {
+                console.error('No dashboard data available for summary calculation');
+                return null;
+            }
+            
             try {
-                const response = await fetch(`/api/portfolio/summary?_t=${Date.now()}`);
-                const data = await response.json();
-                return data;
+                const stocks = dashboardData.portfolio_stocks;
+                
+                // Calculate totals
+                const totalSymbols = stocks.length;
+                const totalNvdr = stocks.reduce((sum, stock) => sum + (stock.nvdr || 0), 0);
+                const totalShort = stocks.reduce((sum, stock) => sum + (stock.shortBaht || 0), 0);
+                
+                // Calculate average price (excluding 0 prices)
+                const validPrices = stocks.map(s => s.close).filter(price => price > 0);
+                const avgPrice = validPrices.length > 0 ? 
+                    validPrices.reduce((sum, price) => sum + price, 0) / validPrices.length : 0;
+                
+                console.log(`📊 Summary calculated: ${totalSymbols} stocks, NVDR: ${(totalNvdr/1000000).toFixed(1)}M, Short: ${(totalShort/1000000).toFixed(1)}M`);
+                
+                return {
+                    trade_date: dashboardData.trade_date,
+                    total_symbols: totalSymbols,
+                    avg_price: parseFloat(avgPrice.toFixed(2)),
+                    total_nvdr_mb: parseFloat((totalNvdr / 1000000).toFixed(2)),
+                    total_short_mb: parseFloat((totalShort / 1000000).toFixed(2))
+                };
             } catch (error) {
-                console.error('Error fetching summary data:', error);
+                console.error('Error calculating summary data:', error);
                 return null;
             }
         }
@@ -738,6 +802,14 @@
                 const response = await fetch(`/api/portfolio/remove-symbol/${symbol}`, {
                     method: 'DELETE'
                 });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    // Show alert for validation errors (like cannot remove symbol with holdings)
+                    alert(`Cannot remove ${symbol}: ${errorData.detail || 'Unknown error'}`);
+                    return { success: false, error: errorData.detail };
+                }
+                
                 const result = await response.json();
                 if (result.success) {
                     portfolioSymbols.delete(symbol);
@@ -754,10 +826,14 @@
                         // Only render the portfolio table, charts will be handled by renderMyPortfolio
                         renderMyPortfolio(myPortfolioData);
                     }
+                    
+                    // Show success message
+                    alert(`Successfully removed ${symbol} from portfolio`);
                 }
                 return result;
             } catch (error) {
                 console.error('Error removing from portfolio:', error);
+                alert(`Error removing ${symbol}: ${error.message}`);
                 return { success: false, error: error.message };
             }
         }
@@ -919,8 +995,12 @@
         function renderMyPortfolio(data) {
             const tbody = document.getElementById('my-portfolio-tbody');
             const emptyState = document.getElementById('my-portfolio-empty');
+            const loadingState = document.getElementById('my-portfolio-loading');
             const countEl = document.getElementById('portfolio-count');
 
+            // Hide loading state when data is rendered
+            loadingState.style.display = 'none';
+            
             countEl.textContent = `${data.length} symbols`;
 
             if (!data || data.length === 0) {
@@ -1172,7 +1252,7 @@
         // Export functionality
         async function exportCSV() {
             try {
-                const currentDate = document.getElementById('portfolio-date-select').value;
+                const currentDate = document.getElementById('portfolio-date-picker').value;
                 const url = `/api/portfolio/export.csv${currentDate ? `?portfolio_date=${currentDate}` : ''}`;
                 
                 const response = await fetch(url);
@@ -1490,13 +1570,15 @@
         async function refreshFromDatabase() {
             try {
                 // Load existing data from database only
-                const [dashboardData, summaryData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
                     fetchDashboardData(),
-                    fetchSummaryData(),
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
                 ]);
+                
+                // Calculate summary from dashboard data
+                const summaryData = await fetchSummaryData(dashboardData);
                 
                 // Display the data
                 if (dashboardData && dashboardData.portfolio_stocks && dashboardData.portfolio_stocks.length > 0) {
@@ -1687,12 +1769,14 @@
                 console.log('🚀 Loading portfolio from database...');
                 
                 // Load existing data immediately from database
-                const [dashboardData, summaryData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, setIndexData, setIndexChartData] = await Promise.all([
                     fetchDashboardData(),
-                    fetchSummaryData(),
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
                 ]);
+                
+                // Calculate summary from dashboard data
+                const summaryData = await fetchSummaryData(dashboardData);
                 
                 // Display the existing data first
                 let hasData = false;
@@ -1712,8 +1796,7 @@
                     renderSetIndexChart(setIndexChartData);
                 }
                 
-                // Load portfolio data for current date
-                await loadPortfolioForDate(currentPortfolioDate);
+                // Portfolio data will be loaded after available dates are fetched
                 
                 // Always hide loading state since server pre-loads data on startup
                 document.getElementById('loading-state').style.display = 'none';
@@ -1746,13 +1829,15 @@
         // Function to refresh data after background update
         async function refreshDataAfterUpdate() {
             try {
-                const [dashboardData, summaryData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
                     fetchDashboardData(),
-                    fetchSummaryData(), 
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
                 ]);
+                
+                // Calculate summary from dashboard data
+                const summaryData = await fetchSummaryData(dashboardData);
                 
                 if (dashboardData) {
                     originalData = dashboardData.portfolio_stocks || [];
@@ -1774,11 +1859,41 @@
         
         // Shared function to render dashboard data
         function renderDashboard(dashboardData, summaryData, portfolioData) {
-            // Update trade date
+            // Update trade date with data source information
             const tradeDateEl = document.getElementById('trade-date');
             const lastUpdatedEl = document.getElementById('last-updated');
             if (dashboardData.trade_date) {
-                tradeDateEl.textContent = `Trade Date: ${dashboardData.trade_date}`;
+                let tradeDateText = `Trade Date: ${dashboardData.trade_date}`;
+                
+                // Add info about different data dates if available
+                if (dashboardData.data_dates) {
+                    const dateDates = dashboardData.data_dates;
+                    const mainDate = dashboardData.trade_date;
+                    const differentDates = [];
+                    
+                    if (dateDates.nvdr && dateDates.nvdr !== mainDate) {
+                        differentDates.push(`NVDR: ${dateDates.nvdr}`);
+                    }
+                    if (dateDates.short_sales) {
+                        if (Array.isArray(dateDates.short_sales)) {
+                            // Multiple dates - show as range or "mixed"
+                            if (dateDates.short_sales.length === 2 && dateDates.short_sales.includes(mainDate)) {
+                                const otherDate = dateDates.short_sales.find(d => d !== mainDate);
+                                differentDates.push(`Short Sales: ${otherDate}-${mainDate} (mixed)`);
+                            } else {
+                                differentDates.push(`Short Sales: ${dateDates.short_sales.join('-')} (mixed)`);
+                            }
+                        } else if (dateDates.short_sales !== mainDate) {
+                            differentDates.push(`Short Sales: ${dateDates.short_sales}`);
+                        }
+                    }
+                    
+                    if (differentDates.length > 0) {
+                        tradeDateText += ` (${differentDates.join(', ')})`;
+                    }
+                }
+                
+                tradeDateEl.textContent = tradeDateText;
                 lastUpdatedEl.textContent = new Date().toLocaleString();
             }
 
@@ -2431,32 +2546,202 @@
             }
         }
         
+        // Global variable for available dates
+        let availableDatesSet = new Set();
+        let latestAvailableDate = null;
+        
         async function loadAvailableDates() {
             try {
-                const response = await fetch('/api/portfolio/available-dates');
+                const response = await fetch('/api/portfolio/date-availability');
                 const data = await response.json();
                 
                 if (data.success) {
-                    const selectEl = document.getElementById('portfolio-date-select');
-                    selectEl.innerHTML = data.dates.map(date => 
-                        `<option value="${date}" ${date === currentPortfolioDate ? 'selected' : ''}>${date}</option>`
-                    ).join('');
+                    // Store available dates for validation
+                    availableDatesSet = new Set(data.available_dates);
+                    latestAvailableDate = data.latest_date;
+                    
+                    const datePickerEl = document.getElementById('portfolio-date-picker');
+                    
+                    // Set initial value to today
+                    const today = new Date().toISOString().split('T')[0];
+                    currentPortfolioDate = today;
+                    datePickerEl.value = today;
+                    
+                    // Update UI to show today's status
+                    updateDateStatus(today);
+                    
+                    // Load portfolio data for today (with persistence from previous dates)
+                    await loadPortfolioForDate(today);
+                    
+                    // Also refresh All Symbols table for today's date
+                    await refreshAllSymbolsForDate(today);
+                    
+                    // Set min and max dates (last 90 days)
+                    const todayDate = new Date();
+                    const minDate = new Date(todayDate.getTime() - (90 * 24 * 60 * 60 * 1000));
+                    
+                    datePickerEl.min = minDate.toISOString().split('T')[0];
+                    datePickerEl.max = todayDate.toISOString().split('T')[0];
                 }
             } catch (error) {
-                console.error('Error loading available dates:', error);
+                console.error('Error loading date availability:', error);
+            }
+        }
+        
+        function updateDateStatus(date) {
+            const datePickerEl = document.getElementById('portfolio-date-picker');
+            const statusEl = document.getElementById('date-status');
+            const isAvailable = availableDatesSet.has(date);
+            const today = new Date().toISOString().split('T')[0];
+            const isToday = date === today;
+            
+            // Update input styling
+            datePickerEl.classList.remove('date-available', 'date-unavailable');
+            if (isAvailable) {
+                datePickerEl.classList.add('date-available');
+            } else {
+                datePickerEl.classList.add('date-unavailable');
+            }
+            
+            // Update status text
+            statusEl.classList.remove('available', 'unavailable', 'today');
+            if (isToday) {
+                statusEl.classList.add('today');
+                statusEl.textContent = '📅 Today';
+            } else if (isAvailable) {
+                statusEl.classList.add('available');
+                statusEl.textContent = '✓ Available';
+            } else {
+                statusEl.classList.add('unavailable');
+                statusEl.textContent = '⚠️ No data';
+            }
+        }
+        
+        async function refreshAllSymbolsForDate(selectedDate) {
+            try {
+                console.log(`📅 Refreshing All Symbols table for date: ${selectedDate}`);
+                
+                // Show loading state for All Symbols table
+                const loadingState = document.getElementById('loading-state');
+                const emptyState = document.getElementById('empty-state');
+                const tbody = document.getElementById('portfolio-tbody');
+                
+                loadingState.style.display = 'block';
+                emptyState.style.display = 'none';
+                tbody.innerHTML = '';
+                
+                // Update header to show loading
+                const headerEl = document.getElementById('all-symbols-header');
+                if (headerEl) {
+                    headerEl.textContent = `Loading data for ${selectedDate}...`;
+                }
+                
+                // Fetch dashboard data with the selected date
+                const dashboardData = await fetchDashboardData(selectedDate);
+                
+                // Hide loading state
+                loadingState.style.display = 'none';
+                
+                if (dashboardData && dashboardData.portfolio_stocks) {
+                    // Update the global data
+                    originalData = dashboardData.portfolio_stocks || [];
+                    
+                    // Calculate summary from the dashboard data for this date
+                    const summaryData = await fetchSummaryData(dashboardData);
+                    
+                    // Re-render the All Symbols table AND update summary cards
+                    filterAndSort();
+                    renderSummaryCards(summaryData);
+                    
+                    // Update header to show success
+                    if (headerEl) {
+                        headerEl.textContent = `${originalData.length} stocks for ${selectedDate}`;
+                    }
+                    
+                    console.log(`✅ Updated All Symbols table and summary cards with ${originalData.length} stocks for ${selectedDate}`);
+                } else {
+                    // Show empty state if no data for selected date
+                    originalData = [];
+                    filterAndSort();
+                    renderSummaryCards(null); // Clear summary cards
+                    
+                    // Update header to show no data
+                    if (headerEl) {
+                        headerEl.textContent = `No data available for ${selectedDate}`;
+                    }
+                    
+                    emptyState.style.display = 'block';
+                    console.log(`⚠️ No data available for ${selectedDate}, showing empty table`);
+                }
+            } catch (error) {
+                console.error('Error refreshing All Symbols for date:', error);
+                // Hide loading state and show error
+                document.getElementById('loading-state').style.display = 'none';
+                document.getElementById('empty-state').style.display = 'block';
+                
+                const headerEl = document.getElementById('all-symbols-header');
+                if (headerEl) {
+                    headerEl.textContent = `Error loading data for ${selectedDate}`;
+                }
             }
         }
         
         async function loadPortfolioForDate(date) {
             try {
+                // Show loading state
+                const loadingState = document.getElementById('my-portfolio-loading');
+                const emptyState = document.getElementById('my-portfolio-empty');
+                const tbody = document.getElementById('my-portfolio-tbody');
+                
+                loadingState.style.display = 'block';
+                emptyState.style.display = 'none';
+                tbody.innerHTML = '';
+                
                 const response = await fetch(`/api/portfolio/holdings?trade_date=${date}`);
                 const data = await response.json();
+                
+                // Hide loading state
+                loadingState.style.display = 'none';
                 
                 if (data.success) {
                     myPortfolioData = data.portfolio_data || [];
                     renderMyPortfolio(myPortfolioData);
                     
-                    // Update trade date display if we have market data
+                    // Update portfolio data info
+                    const portfolioDataInfoEl = document.getElementById('portfolio-data-info');
+                    if (portfolioDataInfoEl) {
+                        if (data.data_dates) {
+                            const dateDates = data.data_dates;
+                            const differentDates = [];
+                            
+                            if (dateDates.nvdr && dateDates.nvdr !== data.market_date) {
+                                differentDates.push(`NVDR: ${dateDates.nvdr}`);
+                            }
+                            if (dateDates.short_sales) {
+                                if (Array.isArray(dateDates.short_sales)) {
+                                    // Multiple dates - show as range or "mixed"
+                                    if (dateDates.short_sales.length === 2 && dateDates.short_sales.includes(data.market_date)) {
+                                        const otherDate = dateDates.short_sales.find(d => d !== data.market_date);
+                                        differentDates.push(`Short Sales: ${otherDate}-${data.market_date} (mixed)`);
+                                    } else {
+                                        differentDates.push(`Short Sales: ${dateDates.short_sales.join('-')} (mixed)`);
+                                    }
+                                } else if (dateDates.short_sales !== data.market_date) {
+                                    differentDates.push(`Short Sales: ${dateDates.short_sales}`);
+                                }
+                            }
+                            
+                            let infoText = `Data from ${data.market_date}`;
+                            if (differentDates.length > 0) {
+                                infoText += ` (${differentDates.join(', ')})`;
+                            }
+                            portfolioDataInfoEl.textContent = infoText;
+                        } else if (data.market_date) {
+                            portfolioDataInfoEl.textContent = `Data from ${data.market_date}`;
+                        }
+                    }
+                    
+                    // Update main trade date display if we have market data
                     if (data.market_date) {
                         const tradeDateEl = document.getElementById('trade-date');
                         if (tradeDateEl) {
@@ -2465,9 +2750,14 @@
                     }
                 } else {
                     console.error('Error loading portfolio:', data);
+                    // Show empty state on error
+                    emptyState.style.display = 'block';
                 }
             } catch (error) {
                 console.error('Error loading portfolio:', error);
+                // Hide loading state and show empty state on error
+                document.getElementById('my-portfolio-loading').style.display = 'none';
+                document.getElementById('my-portfolio-empty').style.display = 'block';
             }
         }
 
@@ -2500,10 +2790,19 @@
             // Load available dates and set up date selector
             loadAvailableDates();
             
-            // Date selector change handler
-            document.getElementById('portfolio-date-select').addEventListener('change', (e) => {
-                currentPortfolioDate = e.target.value;
+            // Date picker change handler
+            document.getElementById('portfolio-date-picker').addEventListener('change', async (e) => {
+                const selectedDate = e.target.value;
+                currentPortfolioDate = selectedDate;
+                
+                // Update status based on availability
+                updateDateStatus(selectedDate);
+                
+                // Load portfolio holdings for the selected date
                 loadPortfolioForDate(currentPortfolioDate);
+                
+                // Also refresh the All Symbols table with data for the selected date
+                await refreshAllSymbolsForDate(selectedDate);
             });
 
             // Search functionality

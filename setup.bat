@@ -20,19 +20,71 @@ REM Get the current directory
 set "CURRENT_DIR=%~dp0"
 set "BATCH_PATH=%CURRENT_DIR%start.bat"
 
-REM Create a VBS script to run the batch file hidden
-echo Set WshShell = CreateObject("WScript.Shell") > "%TEMP%\portfolio_startup_server.vbs"
-echo WshShell.Run """%BATCH_PATH%""", 0, False >> "%TEMP%\portfolio_startup_server.vbs"
+REM Verify the start.bat file exists
+if not exist "%BATCH_PATH%" (
+    echo ❌ Error: start.bat not found at %BATCH_PATH%
+    echo Please ensure start.bat exists in the same directory as setup.bat
+    pause
+    exit /b 1
+)
 
-REM Get the startup folder path
+echo ✅ Found start.bat at: %BATCH_PATH%
+
+REM Create a permanent VBS script in the project directory instead of TEMP
+set "VBS_PATH=%CURRENT_DIR%portfolio_startup_server.vbs"
+echo Creating VBS script at: %VBS_PATH%
+
+echo Set WshShell = CreateObject("WScript.Shell") > "%VBS_PATH%"
+echo WshShell.Run """%BATCH_PATH%""", 0, False >> "%VBS_PATH%"
+
+if not exist "%VBS_PATH%" (
+    echo ❌ Failed to create VBS script
+    pause
+    exit /b 1
+)
+
+echo ✅ VBS script created successfully
+
+REM Get the startup folder path with multiple fallback methods
+set "STARTUP_FOLDER="
+
+REM Method 1: Try registry query
 for /f "tokens=2*" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders" /v Startup 2^>nul') do set "STARTUP_FOLDER=%%b"
 
-REM Create shortcut in Startup folder
+REM Method 2: If registry failed, try environment variable
+if not defined STARTUP_FOLDER (
+    set "STARTUP_FOLDER=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
+)
+
+REM Method 3: If still not found, try common location
+if not defined STARTUP_FOLDER (
+    set "STARTUP_FOLDER=%USERPROFILE%\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+)
+
+REM Verify startup folder exists
+if not exist "%STARTUP_FOLDER%" (
+    echo ❌ Error: Startup folder not found at: %STARTUP_FOLDER%
+    echo Please check your Windows startup folder location
+    pause
+    exit /b 1
+)
+
+echo ✅ Found startup folder at: %STARTUP_FOLDER%
+
+REM Create shortcut in Startup folder with better error handling
 echo Creating startup shortcut...
-powershell -Command "try { $WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTUP_FOLDER%\Portfolio Dashboard Server.lnk'); $Shortcut.TargetPath = 'wscript.exe'; $Shortcut.Arguments = '%TEMP%\portfolio_startup_server.vbs'; $Shortcut.WorkingDirectory = '%CURRENT_DIR%'; $Shortcut.Description = 'Portfolio Dashboard Server Auto-Start (No Browser)'; $Shortcut.Save(); Write-Host '✅ Auto-start shortcut created successfully' } catch { Write-Host '❌ Error creating shortcut: ' + $_.Exception.Message }"
+powershell -Command "try { $WshShell = New-Object -comObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut('%STARTUP_FOLDER%\Portfolio Dashboard Server.lnk'); $Shortcut.TargetPath = 'wscript.exe'; $Shortcut.Arguments = '%VBS_PATH%'; $Shortcut.WorkingDirectory = '%CURRENT_DIR%'; $Shortcut.Description = 'Portfolio Dashboard Server Auto-Start (No Browser)'; $Shortcut.Save(); Write-Host '✅ Auto-start shortcut created successfully' } catch { Write-Host '❌ Error creating shortcut: ' + $_.Exception.Message; exit 1 }"
 
 if errorlevel 1 (
-    echo ⚠️  Auto-start setup failed, but continuing with scheduled tasks...
+    echo ❌ Auto-start setup failed
+    echo.
+    echo Troubleshooting steps:
+    echo 1. Run this script as Administrator
+    echo 2. Check if PowerShell execution policy allows script execution
+    echo 3. Verify the startup folder is writable
+    echo.
+    echo Press any key to continue with scheduled tasks setup...
+    pause >nul
 ) else (
     echo ✅ Auto-start setup completed successfully
 )
@@ -46,6 +98,16 @@ echo.
 REM Configuration for scheduled tasks
 set TASK_NAME_PREFIX=SET_Scraper
 set SCRIPT_PATH=%CURRENT_DIR%run_scheduled_scrape.bat
+
+REM Verify the scheduled script exists
+if not exist "%SCRIPT_PATH%" (
+    echo ❌ Error: run_scheduled_scrape.bat not found at %SCRIPT_PATH%
+    echo Please ensure run_scheduled_scrape.bat exists in the same directory
+    pause
+    exit /b 1
+)
+
+echo ✅ Found scheduled script at: %SCRIPT_PATH%
 
 REM Delete existing tasks if present
 echo Cleaning up existing scheduled tasks...
@@ -152,6 +214,8 @@ echo 🚀 Auto-Start (Server Only):
 echo - Server will start automatically on login
 echo - No browser will open automatically
 echo - Git updates will be checked automatically
+echo - VBS script location: %VBS_PATH%
+echo - Shortcut location: %STARTUP_FOLDER%\Portfolio Dashboard Server.lnk
 echo.
 echo ⏰ Scheduled Data Scraping:
 echo - 10:30 AM (Monday-Friday)
@@ -170,6 +234,7 @@ echo - Remove scheduled tasks: Run the delete commands shown below
 echo.
 echo 🗑️  To remove everything:
 echo - Auto-start: Delete shortcut from startup folder
+echo - VBS script: Delete %VBS_PATH%
 echo - Scheduled tasks: 
 echo   schtasks /Delete /TN SET_Scraper_1030 /F
 echo   schtasks /Delete /TN SET_Scraper_1300 /F

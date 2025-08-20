@@ -248,8 +248,12 @@ The project includes Windows batch files for easy automation. This is the **simp
 
 - **`setup.bat`** (run once): Complete setup including auto-start and scheduled scraping
 - **`start.bat`** (manual start): Starts the server with database updates (no browser)
+- **`run_scheduled_scrape.bat`** (scheduled): Automated data scraping script
 - **`server_manager.bat`** (control): Interactive server management interface
 - **`git_update.bat`** (updates): Check for and pull latest git updates
+- **`diagnose_autostart.bat`** (troubleshoot): Check auto-start system for issues
+- **`fix_autostart.bat`** (repair): Fix common auto-start problems
+- **`diagnose_windows_tasks.bat`** (diagnostic): Comprehensive Windows system check
 
 ### 🚀 **One-Click Windows Setup:**
 
@@ -353,23 +357,93 @@ taskkill /f /im python.exe
 ### 🔧 **Troubleshooting:**
 
 **If setup.bat fails:**
-```bash
-# Check Python installation
-python --version
 
-# Install Python 3.10+ from python.org if needed
-# Then run setup.bat again
+1. **Run diagnostics first:**
+   ```cmd
+   diagnose_autostart.bat
+   ```
+   This will identify specific issues with your auto-start setup.
+
+2. **Try the auto-start fix:**
+   ```cmd
+   fix_autostart.bat
+   ```
+   This will recreate the VBS script and startup shortcut.
+
+3. **Check Python installation:**
+   ```cmd
+   python --version
+   ```
+   If Python is not found, install Python 3.8+ from python.org
+
+4. **Run setup.bat again**
+
+### 🔄 **For Users Who Already Installed:**
+
+**Check if your setup is working:**
+```cmd
+# Comprehensive Windows diagnostic
+diagnose_windows_tasks.bat
+
+# Check scheduled tasks status
+schtasks /query /fo table
+
+# Test the scraping script manually
+run_scheduled_scrape.bat
 ```
+
+**If tasks are working but you want to update:**
+```cmd
+# Pull latest changes
+git_update.bat
+
+# Or manually:
+git pull origin main
+```
+
+**If only auto-start is broken:**
+```cmd
+# Quick fix for auto-start only
+fix_autostart.bat
+```
+
+**If specific tasks are missing:**
+```cmd
+# Recreate individual tasks (no need to reinstall everything)
+schtasks /Create /TN SET_Scraper_1030 /TR "run_scheduled_scrape.bat" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 10:30 /RL LIMITED
+schtasks /Create /TN SET_Scraper_1300 /TR "run_scheduled_scrape.bat" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 13:00 /RL LIMITED
+schtasks /Create /TN SET_Scraper_1730 /TR "run_scheduled_scrape.bat" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 17:30 /RL LIMITED
+```
+
+**Signs your setup is working:**
+- ✅ `schtasks /query` shows 3 SET_Scraper tasks
+- ✅ New files appear in `_out` directory at scheduled times
+- ✅ `scraper_*.log` files are created
+- ✅ Server starts automatically on login
 
 **If server doesn't start automatically:**
-```bash
-# Check auto-start shortcut
-# Press Win+R, type "shell:startup" and press Enter
-# Look for "Portfolio Dashboard Server.lnk"
 
-# Or manually start:
-start.bat
-```
+1. **Run diagnostics:**
+   ```cmd
+   diagnose_autostart.bat
+   ```
+   This will check all auto-start components and identify issues.
+
+2. **Try the fix script:**
+   ```cmd
+   fix_autostart.bat
+   ```
+   This will recreate the VBS script and startup shortcut.
+
+3. **Manual checks:**
+   ```cmd
+   # Check auto-start shortcut
+   # Press Win+R, type "shell:startup" and press Enter
+   # Look for "Portfolio Dashboard Server.lnk"
+
+   # Or manually start:
+   start.bat
+   ```
 
 **If scheduled tasks don't work:**
 ```bash
@@ -389,6 +463,53 @@ dir scraper_*.log
 ```bash
 # Right-click Command Prompt and "Run as Administrator"
 # Then run setup.bat again
+```
+
+### 📤 **Updating and Pushing Changes:**
+
+**Check for updates:**
+```cmd
+# Check if you have the latest version
+git status
+
+# Pull latest changes
+git_update.bat
+
+# Or manually:
+git pull origin main
+```
+
+**Push your changes:**
+```cmd
+# Add all changes
+git add .
+
+# Commit changes
+git commit -m "Updated portfolio data and settings"
+
+# Push to remote repository
+git push origin main
+```
+
+**If you have local changes to keep:**
+```cmd
+# Stash your changes before pulling
+git stash
+
+# Pull latest changes
+git pull origin main
+
+# Apply your changes back
+git stash pop
+```
+
+**After updating:**
+```cmd
+# Test if everything still works
+run_scheduled_scrape.bat
+
+# Check if tasks are still active
+schtasks /query /fo table
 ```
 
 ### 🗑️ **Removing the Setup:**
