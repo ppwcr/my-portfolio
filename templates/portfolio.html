@@ -697,11 +697,14 @@
         }
 
         // API functions
-        async function fetchDashboardData(tradeDate = null) {
+        async function fetchDashboardData(tradeDate = null, showAllSymbols = false) {
             try {
                 let url = `/api/portfolio/dashboard?_t=${Date.now()}`;
                 if (tradeDate) {
                     url += `&trade_date=${tradeDate}`;
+                }
+                if (showAllSymbols) {
+                    url += `&show_all_symbols=true`;
                 }
                 const response = await fetch(url);
                 const data = await response.json();
@@ -1596,9 +1599,9 @@
         // Function to refresh data from database only (no updates)
         async function refreshFromDatabase() {
             try {
-                // Load existing data from database only
+                // Load existing data from database only - show ALL symbols for the main table
                 const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
-                    fetchDashboardData(),
+                    fetchDashboardData(null, true), // Show all symbols
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
@@ -1797,7 +1800,7 @@
                 
                 // Load existing data immediately from database
                 const [dashboardData, setIndexData, setIndexChartData] = await Promise.all([
-                    fetchDashboardData(),
+                    fetchDashboardData(null, true), // Show all symbols
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
                 ]);
@@ -1857,7 +1860,7 @@
         async function refreshDataAfterUpdate() {
             try {
                 const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
-                    fetchDashboardData(),
+                    fetchDashboardData(null, true), // Show all symbols
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
                     fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
@@ -2662,8 +2665,8 @@
                     headerEl.textContent = `Loading data for ${selectedDate}...`;
                 }
                 
-                // Fetch dashboard data with the selected date
-                const dashboardData = await fetchDashboardData(selectedDate);
+                // Fetch dashboard data with the selected date - show ALL symbols
+                const dashboardData = await fetchDashboardData(selectedDate, true);
                 
                 // Hide loading state
                 loadingState.style.display = 'none';

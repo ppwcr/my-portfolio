@@ -248,12 +248,10 @@ The project includes Windows batch files for easy automation. This is the **simp
 
 - **`setup.bat`** (run once): Complete setup including auto-start and scheduled scraping
 - **`start.bat`** (manual start): Starts the server with database updates (no browser)
-- **`run_scheduled_scrape.bat`** (scheduled): Automated data scraping script
-- **`server_manager.bat`** (control): Interactive server management interface
 - **`git_update.bat`** (updates): Check for and pull latest git updates
-- **`diagnose_autostart.bat`** (troubleshoot): Check auto-start system for issues
-- **`fix_autostart.bat`** (repair): Fix common auto-start problems
-- **`diagnose_windows_tasks.bat`** (diagnostic): Comprehensive Windows system check
+- **`uninstall.bat`** (remove): Remove auto-start and scheduled tasks
+- **`diagnose_server.bat`** (troubleshoot): Check server setup and dependencies
+- **`monitor_server.bat`** (monitor): Real-time server monitoring and control (admin)
 
 ### 🚀 **One-Click Windows Setup:**
 
@@ -268,9 +266,9 @@ setup.bat
 ```
 
 **What setup.bat does:**
-- ✅ Sets up auto-start (server starts automatically on login)
+- ✅ Sets up auto-start (server starts automatically on login with git update)
 - ✅ Creates scheduled data scraping (10:30, 13:00, 17:30 weekdays)
-- ✅ Includes git update checking
+- ✅ Creates daily git updates at 6:00 AM
 - ✅ No browser opens automatically (server only)
 
 #### **Step 2: Create Environment File**
@@ -303,9 +301,9 @@ server_manager.bat
 ### ⏰ **Automatic Features:**
 
 #### **Auto-Start:**
-- Server starts automatically when you log in
+- Server starts automatically when you log in (with git update first)
 - No browser opens (server runs in background)
-- Git updates checked automatically
+- Git updates run daily at 6:00 AM automatically
 
 #### **Scheduled Data Scraping:**
 - **10:30 AM** - Morning data update
@@ -314,47 +312,82 @@ server_manager.bat
 - Runs Monday-Friday only
 ### 🔧 **Server Management:**
 
-#### **Using Server Manager:**
-```bash
-# Run the interactive server manager
-server_manager.bat
-```
-
-**Server Manager Options:**
-- **1** - Start server in background
-- **2** - Stop server
-- **3** - Check server status
-- **4** - Restart server
-- **5** - View logs
-- **6** - Exit
-
 #### **Manual Control:**
 ```bash
 # Start server manually
 start.bat
 
-# Check if server is running
+# Update from git manually
+git_update.bat
+
+# Check server status
 curl http://127.0.0.1:8000
 
 # Stop server (if needed)
 taskkill /f /im python.exe
+
+### 📊 **Server Monitoring:**
+
+To monitor the background server in real-time:
+```bash
+# Right-click Command Prompt → "Run as administrator"
+monitor_server.bat
+```
+
+**Monitor Features:**
+- 🔍 **Real-time server status** (running/stopped)
+- 📁 **Recent data files** in _out directory
+- ⏰ **Scheduled tasks status**
+- 🔄 **Auto-start configuration status**
+- 💻 **System resources** (CPU, memory)
+- 🎛️ **Interactive controls** (start/stop server, view logs, git status)
+
+**Monitor Options:**
+- **1** - Refresh display (auto-update every 5 seconds)
+- **2** - Start server manually
+- **3** - Stop server
+- **4** - View server logs
+- **5** - Check git status
+- **6** - Exit monitor
+
+### 🗑️ **Uninstalling Auto-Start:**
+
+To remove auto-start and scheduled tasks:
+```bash
+# Right-click Command Prompt → "Run as administrator"
+uninstall.bat
+```
+
+**What uninstall.bat does:**
+- ✅ Removes auto-start entry from registry
+- ✅ Removes all scheduled tasks (git updates and data scraping)
+- ✅ Stops any running server processes
+- ✅ Removes startup scripts
 ```
 
 ### 📋 **Daily Workflow:**
 
-1. **Automatic:** Server starts automatically on login
-2. **Manual control:** Use `server_manager.bat` when needed
-3. **Access dashboard:** [http://127.0.0.1:8000/portfolio](http://127.0.0.1:8000/portfolio)
+1. **Automatic:** Server starts automatically on login (with git update)
+2. **Scheduled updates:** Git updates daily at 6:00 AM
+3. **Scheduled scraping:** Data updates at 10:30, 13:00, 17:30 (weekdays)
+4. **Access dashboard:** [http://127.0.0.1:8000/portfolio](http://127.0.0.1:8000/portfolio)
 
 ### ⚠️ **Important Notes:**
 
-- **Administrator Rights:** `setup.bat` needs Administrator privileges for scheduled tasks
-- **Auto-start:** Server runs automatically in background
+- **Administrator Rights:** `setup.bat` and `uninstall.bat` need Administrator privileges for scheduled tasks
+- **Auto-start:** Server runs automatically in background with git update
 - **Python Required:** Make sure Python 3.10+ is installed
 - **Environment File:** Don't forget to create your `.env` file
 - **Weekend Skip:** Scheduled scraping runs Monday-Friday only
+- **Git Updates:** Daily at 6:00 AM automatically
 
 ### 🔧 **Troubleshooting:**
+
+**If server won't start:**
+```bash
+# Run diagnostic tool
+diagnose_server.bat
+```
 
 **If setup.bat fails:**
 

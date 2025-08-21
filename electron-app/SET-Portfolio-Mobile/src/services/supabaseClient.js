@@ -68,10 +68,25 @@ class SupabaseService {
     }
 
     try {
-      // Fetch sector data to show as holdings (all symbols)
+      // First, get the latest trade date
+      const { data: latestDateData, error: dateError } = await this.client
+        .from('sector_data')
+        .select('trade_date')
+        .order('trade_date', { ascending: false })
+        .limit(1);
+
+      if (dateError || !latestDateData || latestDateData.length === 0) {
+        console.error('Error fetching latest date:', dateError);
+        return this.getDemoDashboardData();
+      }
+
+      const latestDate = latestDateData[0].trade_date;
+
+      // Fetch sector data for the latest date
       const { data: sectorData, error } = await this.client
         .from('sector_data')
         .select('*')
+        .eq('trade_date', latestDate)
         .order('last_price', { ascending: false })
         .limit(1000);
 
@@ -80,18 +95,67 @@ class SupabaseService {
         return this.getDemoDashboardData();
       }
 
-      // Transform sector data into portfolio holdings format (only last price)
-      const holdings = sectorData.map(item => ({
-        symbol: item.symbol || 'N/A',
-        name: item.symbol || 'Unknown',
-        sector: item.sector || 'Unknown', 
-        last_price: item.last_price || 0,
-        change: item.change || '0.00',
-        percent_change: item.percent_change || '0.00%',
-        volume: item.volume_shares || 0,
-        value_baht: item.value_baht || 0,
-        trade_date: item.trade_date
-      }));
+      // Identify symbols with zero or missing prices
+      const symbolsWithZeroPrices = sectorData
+        .filter(item => !item.last_price || item.last_price <= 0)
+        .map(item => item.symbol);
+
+      // Get fallback data for symbols with zero prices - OPTIMIZED with batch query
+      let fallbackData = {};
+      if (symbolsWithZeroPrices.length > 0) {
+        console.log(`🔍 Mobile: Found ${symbolsWithZeroPrices.length} symbols with zero/missing prices, fetching fallback data`);
+        
+        try {
+          // OPTIMIZED: Get all fallback data in a single batch query
+          const { data: fallbackResult } = await this.client
+            .from('sector_data')
+            .select('*')
+            .in('symbol', symbolsWithZeroPrices)
+            .gt('last_price', 0)
+            .order('trade_date', { ascending: false });
+
+          if (fallbackResult && fallbackResult.length > 0) {
+            // Group by symbol and take the most recent entry for each
+            const symbolLatest = {};
+            for (const item of fallbackResult) {
+              const symbol = item.symbol;
+              if (!symbolLatest[symbol]) {
+                symbolLatest[symbol] = item;
+              }
+            }
+            
+            // Update fallbackData with the latest data for each symbol
+            for (const symbol of symbolsWithZeroPrices) {
+              if (symbolLatest[symbol]) {
+                fallbackData[symbol] = symbolLatest[symbol];
+                console.log(`📈 Mobile: Using fallback data for ${symbol}: price=${symbolLatest[symbol].last_price}`);
+              }
+            }
+          }
+        } catch (fallbackError) {
+          console.error(`⚠️ Error getting batch fallback data:`, fallbackError);
+        }
+      }
+
+      // Transform sector data into portfolio holdings format with fallback data
+      const holdings = sectorData.map(item => {
+        // Use fallback data if available and current price is zero/missing
+        const dataToUse = (fallbackData[item.symbol] && (!item.last_price || item.last_price <= 0)) 
+          ? fallbackData[item.symbol] 
+          : item;
+
+        return {
+          symbol: dataToUse.symbol || 'N/A',
+          name: dataToUse.symbol || 'Unknown',
+          sector: dataToUse.sector || 'Unknown', 
+          last_price: dataToUse.last_price || 0,
+          change: dataToUse.change || '0.00',
+          percent_change: dataToUse.percent_change || '0.00%',
+          volume: dataToUse.volume_shares || 0,
+          value_baht: dataToUse.value_baht || 0,
+          trade_date: dataToUse.trade_date
+        };
+      });
 
       return {
         holdings: holdings,

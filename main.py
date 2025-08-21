@@ -54,6 +54,10 @@ except Exception:
 import threading
 yfinance_lock = threading.Lock()
 
+# Simple cache for price data to avoid repeated queries
+price_data_cache = {}
+cache_lock = threading.Lock()
+
 
 # Initialize FastAPI app
 app = FastAPI(title="SET Data Export API", version="1.0.0")
@@ -385,6 +389,115 @@ async def run_cmd(cmd: list[str], timeout: int = 60) -> Tuple[int, str, str]:
         return (124, "", f"Command timed out after {timeout} seconds: {' '.join(cmd)}")
     except Exception as e:
         return (1, "", f"Subprocess error: {str(e)}")
+
+
+def get_latest_available_price_data(db, symbols, target_date):
+    """
+    Get the latest available price data for symbols when their current price is 0 or missing.
+    Returns a dictionary mapping symbols to their latest available price data.
+    OPTIMIZED: Uses batch queries, caching, and limits data for better performance.
+    """
+    try:
+        # Check cache first
+        cache_key = f"{target_date}_{','.join(sorted(symbols))}"
+        with cache_lock:
+            if cache_key in price_data_cache:
+                print(f"📋 Using cached price data for {len(symbols)} symbols")
+                return price_data_cache[cache_key]
+        
+        # First, get current data for the target date
+        current_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change, trade_date').eq('trade_date', target_date).in_('symbol', symbols).execute()
+        current_data = {item['symbol']: item for item in current_result.data} if current_result.data else {}
+        
+        # Identify symbols with missing or zero prices
+        symbols_needing_fallback = []
+        for symbol in symbols:
+            stock_data = current_data.get(symbol, {})
+            last_price = stock_data.get('last_price', 0)
+            if last_price is None or last_price <= 0:
+                symbols_needing_fallback.append(symbol)
+        
+        if not symbols_needing_fallback:
+            # Cache the result
+            with cache_lock:
+                price_data_cache[cache_key] = current_data
+                # Limit cache size to prevent memory issues
+                if len(price_data_cache) > 100:
+                    # Remove oldest entries
+                    oldest_keys = list(price_data_cache.keys())[:20]
+                    for key in oldest_keys:
+                        del price_data_cache[key]
+            return current_data
+        
+        print(f"🔍 Found {len(symbols_needing_fallback)} symbols with missing/zero prices, fetching latest available data")
+        
+        # OPTIMIZED: Get all fallback data in a single batch query with limit
+        fallback_data = {}
+        if symbols_needing_fallback:
+            try:
+                # Limit to last 30 days of data to improve performance
+                from datetime import timedelta
+                import datetime
+                thirty_days_ago = (datetime.datetime.now() - timedelta(days=30)).date().isoformat()
+                
+                # Get the latest non-zero price data for all symbols needing fallback in one query
+                # Limit to recent data and use a reasonable limit to prevent memory issues
+                # Note: We need to handle None values properly, so we'll filter them in Python instead of SQL
+                fallback_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change, trade_date').in_('symbol', symbols_needing_fallback).gte('trade_date', thirty_days_ago).order('trade_date', desc=True).limit(1000).execute()
+                
+                if fallback_result.data:
+                    # Filter out None and zero prices, then group by symbol and take the most recent entry for each
+                    symbol_latest = {}
+                    for item in fallback_result.data:
+                        symbol = item['symbol']
+                        last_price = item.get('last_price')
+                        # Only include items with valid prices (not None and greater than 0)
+                        if last_price is not None and last_price > 0:
+                            if symbol not in symbol_latest:
+                                symbol_latest[symbol] = item
+                    
+                    # Update fallback_data with the latest data for each symbol
+                    for symbol in symbols_needing_fallback:
+                        if symbol in symbol_latest:
+                            fallback_data[symbol] = symbol_latest[symbol]
+                            print(f"📈 Using fallback data for {symbol}: price={symbol_latest[symbol]['last_price']} from {symbol_latest[symbol]['trade_date']}")
+                        else:
+                            # If no fallback found, keep the original data (even if price is 0)
+                            fallback_data[symbol] = current_data.get(symbol, {})
+                            print(f"⚠️ No fallback data available for {symbol}")
+                else:
+                    # If no fallback data found, use original data
+                    for symbol in symbols_needing_fallback:
+                        fallback_data[symbol] = current_data.get(symbol, {})
+                        print(f"⚠️ No fallback data available for {symbol}")
+                        
+            except Exception as e:
+                print(f"⚠️ Error getting batch fallback data: {e}")
+                # Fallback to original data if batch query fails
+                for symbol in symbols_needing_fallback:
+                    fallback_data[symbol] = current_data.get(symbol, {})
+        
+        # Merge current data with fallback data
+        merged_data = current_data.copy()
+        merged_data.update(fallback_data)
+        
+        # Cache the result
+        with cache_lock:
+            price_data_cache[cache_key] = merged_data
+            # Limit cache size to prevent memory issues
+            if len(price_data_cache) > 100:
+                # Remove oldest entries
+                oldest_keys = list(price_data_cache.keys())[:20]
+                for key in oldest_keys:
+                    del price_data_cache[key]
+        
+        return merged_data
+        
+    except Exception as e:
+        print(f"⚠️ Error in get_latest_available_price_data: {e}")
+        # Return original data if fallback fails
+        current_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change, trade_date').eq('trade_date', target_date).in_('symbol', symbols).execute()
+        return {item['symbol']: item for item in current_result.data} if current_result.data else {}
 
 
 @app.get("/")
@@ -1770,7 +1883,7 @@ async def get_set_index():
 
 
 @app.get("/api/portfolio/dashboard")
-async def get_portfolio_dashboard(response: Response, trade_date: str = Query(None)):
+async def get_portfolio_dashboard(response: Response, trade_date: str = Query(None), show_all_symbols: bool = Query(False)):
     """Get portfolio dashboard data with investor summary, sector summary, and individual stock data for a specific date or latest available"""
     # Add cache-busting headers to ensure fresh data
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -1779,51 +1892,54 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
     try:
         db = get_proper_db()
         
-        # Determine which dates to use
+        # Determine which dates to use - OPTIMIZED: Use a single date for all data types
         if trade_date:
             # Use the specified date for all data types
             target_trade_date = trade_date
+            latest_dates = {
+                'sector': trade_date,
+                'investor': trade_date, 
+                'nvdr': trade_date,
+                'short': trade_date
+            }
         else:
-            # Get latest trade dates for each data type independently
-            latest_dates = {}
+            # Get the latest available date for each data type separately
+            latest_dates = {'sector': None, 'investor': None, 'nvdr': None, 'short': None}
+            target_trade_date = None
             
-            # Get latest sector_data date
             try:
+                # Get latest sector_data date
                 sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
                 if sector_result.data:
                     latest_dates['sector'] = sector_result.data[0]['trade_date']
-            except:
-                latest_dates['sector'] = None
+                    target_trade_date = latest_dates['sector']  # Use sector date as primary
                 
-            # Get latest investor_summary date
-            try:
+                # Get latest investor_summary date
                 investor_result = db.client.table('investor_summary').select('trade_date').order('trade_date', desc=True).limit(1).execute()
                 if investor_result.data:
                     latest_dates['investor'] = investor_result.data[0]['trade_date']
-            except:
-                latest_dates['investor'] = None
                 
-            # Get latest NVDR date
-            try:
+                # Get latest nvdr_trading date
                 nvdr_result = db.client.table('nvdr_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
                 if nvdr_result.data:
                     latest_dates['nvdr'] = nvdr_result.data[0]['trade_date']
-            except:
-                latest_dates['nvdr'] = None
                 
-            # Get latest short sales date
-            try:
+                # Get latest short_sales_trading date
                 short_result = db.client.table('short_sales_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
                 if short_result.data:
                     latest_dates['short'] = short_result.data[0]['trade_date']
-            except:
-                latest_dates['short'] = None
-            
-            # Use the most recent date across all data types for display
-            available_dates = [d for d in latest_dates.values() if d is not None]
-            target_trade_date = max(available_dates) if available_dates else None
+                    
+                print(f"📅 Dashboard using dates: sector={latest_dates['sector']}, investor={latest_dates['investor']}, nvdr={latest_dates['nvdr']}, short={latest_dates['short']}")
+            except Exception as e:
+                print(f"⚠️ Error getting latest dates: {e}")
         
         latest_trade_date = target_trade_date
+        
+        # Get portfolio symbols for filtering
+        portfolio_symbols = db.get_portfolio_symbols()
+        
+        # Always load ALL symbols from sector_data, then filter based on holdings
+        print(f"📋 Dashboard loading ALL symbols, portfolio has {len(portfolio_symbols)} symbols")
         
         # Get investor summary data using the latest available investor date
         investor_summary = []
@@ -1850,78 +1966,55 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
             
             investor_summary = sorted(unique_investors, key=get_sort_key)
         
-        # Get sector summary using the latest available sector date
+        # Get sector data once for both sector summary and individual stocks - OPTIMIZED
         sector_summary = []
+        stocks_data = {}
         sector_date_to_use = latest_dates.get('sector') if not trade_date else target_trade_date
+        
         if sector_date_to_use:
-            sector_result = db.client.table('sector_data').select('sector, last_price, symbol').eq('trade_date', sector_date_to_use).execute()
-            sector_data = sector_result.data if sector_result.data else []
+            # Get ALL sector data for "all symbols table", not just portfolio symbols
+            sector_result = db.client.table('sector_data').select('sector, last_price, symbol, change, percent_change').eq('trade_date', sector_date_to_use).execute()
             
-            # Group by sector
-            sectors = {}
-            for item in sector_data:
-                sector = item['sector']
-                if sector not in sectors:
-                    sectors[sector] = {'count': 0, 'total_price': 0, 'prices': []}
+            if sector_result.data:
+                # Build sector summary AND individual stocks data from same query
+                sectors = {}
                 
-                if item['last_price'] is not None:
-                    sectors[sector]['count'] += 1
-                    sectors[sector]['total_price'] += item['last_price']
-                    sectors[sector]['prices'].append(item['last_price'])
-            
-            # Calculate averages
-            for sector, data in sectors.items():
-                avg_price = data['total_price'] / data['count'] if data['count'] > 0 else 0
-                sector_summary.append({
-                    'sector': sector,
-                    'stock_count': data['count'],
-                    'avg_price': round(avg_price, 2)
-                })
-        
-        # Get NVDR data using the latest available NVDR date (optimize by doing this once)
-        nvdr_data = {}
-        nvdr_date = None
-        try:
-            nvdr_date_to_use = latest_dates.get('nvdr') if not trade_date else target_trade_date
-            if nvdr_date_to_use:
-                nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', nvdr_date_to_use).execute()
-                nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
-                nvdr_date = nvdr_date_to_use
-        except Exception as e:
-            pass
-        
-        # Get Short Sales data using the latest available Short Sales date (optimize by doing this once)
-        short_data = {}
-        short_date = None
-        try:
-            short_date_to_use = latest_dates.get('short') if not trade_date else target_trade_date
-            if short_date_to_use:
-                short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', short_date_to_use).execute()
-                short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
-                short_date = short_date_to_use
-        except Exception as e:
-            pass
-        
-        # Get individual stock data using the sector date
-        portfolio_stocks = []
-        if sector_date_to_use:
-            # Get all stocks with prices from sector_data using the sector date
-            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', sector_date_to_use).execute()
-            
-            # Clean the data to prevent JSON compliance issues
-            stocks_data = {}
-            if stocks_result.data:
-                total_records = len(stocks_result.data)
-                null_price_count = 0
-                valid_price_count = 0
+                # First pass: collect all symbols and identify those with zero/missing prices
+                all_symbols = [item['symbol'] for item in sector_result.data]
+                symbols_with_zero_prices = []
                 
-                for item in stocks_result.data:
-                    last_price = item.get('last_price')
-                    if last_price is None:
-                        null_price_count += 1
-                    elif last_price >= 0:
-                        valid_price_count += 1
-                        # Clean change and percent_change values
+                for item in sector_result.data:
+                    if item['last_price'] is None or item['last_price'] <= 0:
+                        symbols_with_zero_prices.append(item['symbol'])
+                
+                # If we have symbols with zero prices, get fallback data for them
+                if symbols_with_zero_prices:
+                    print(f"🔍 Dashboard: Found {len(symbols_with_zero_prices)} symbols with zero/missing prices, fetching fallback data")
+                    fallback_data = get_latest_available_price_data(db, symbols_with_zero_prices, sector_date_to_use)
+                    
+                    # Update the sector_result.data with fallback data
+                    for i, item in enumerate(sector_result.data):
+                        if item['symbol'] in fallback_data:
+                            fallback_item = fallback_data[item['symbol']]
+                            fallback_price = fallback_item.get('last_price')
+                            if fallback_price is not None and fallback_price > 0:
+                                sector_result.data[i]['last_price'] = fallback_price
+                                sector_result.data[i]['change'] = fallback_item.get('change', item.get('change', '0.00'))
+                                sector_result.data[i]['percent_change'] = fallback_item.get('percent_change', item.get('percent_change', '0.00'))
+                                print(f"📈 Dashboard: Using fallback data for {item['symbol']}: price={fallback_price}")
+                
+                for item in sector_result.data:
+                    # Process for sector summary
+                    sector = item['sector']
+                    if sector not in sectors:
+                        sectors[sector] = {'count': 0, 'total_price': 0, 'prices': []}
+                    
+                    if item['last_price'] is not None and item['last_price'] >= 0:
+                        sectors[sector]['count'] += 1
+                        sectors[sector]['total_price'] += item['last_price']
+                        sectors[sector]['prices'].append(item['last_price'])
+                        
+                        # Also build individual stock data
                         cleaned_item = {
                             'symbol': item['symbol'],
                             'last_price': item['last_price'],
@@ -1930,64 +2023,111 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                             'percent_change': item.get('percent_change', '0.00') or '0.00'
                         }
                         stocks_data[item['symbol']] = cleaned_item
-                        
+                
+                # Calculate sector averages
+                for sector, data in sectors.items():
+                    avg_price = data['total_price'] / data['count'] if data['count'] > 0 else 0
+                    sector_summary.append({
+                        'sector': sector,
+                        'stock_count': data['count'],
+                        'avg_price': round(avg_price, 2)
+                    })
+        
+        # Get NVDR data using the latest available NVDR date - OPTIMIZED: Get ALL symbols data for "all symbols table"
+        nvdr_data = {}
+        nvdr_date = None
+        try:
+            nvdr_date_to_use = latest_dates.get('nvdr') if not trade_date else target_trade_date
+            if nvdr_date_to_use:
+                # Get ALL NVDR data, not just portfolio symbols, for "all symbols table"
+                nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', nvdr_date_to_use).execute()
+                nvdr_data = {item['symbol']: item['value_net'] for item in nvdr_result.data if item['value_net'] is not None} if nvdr_result.data else {}
+                nvdr_date = nvdr_date_to_use
+                print(f"📈 Dashboard using NVDR data from: {nvdr_date_to_use}, found {len(nvdr_data)} symbols")
+        except Exception as e:
+            print(f"⚠️ Error getting NVDR data for dashboard: {e}")
+        
+        # Get Short Sales data using the latest available Short Sales date - OPTIMIZED: Get ALL symbols data for "all symbols table"
+        short_data = {}
+        short_date = None
+        try:
+            short_date_to_use = latest_dates.get('short') if not trade_date else target_trade_date
+            if short_date_to_use:
+                # Get ALL Short Sales data, not just portfolio symbols, for "all symbols table"
+                short_result = db.client.table('short_sales_trading').select('symbol, short_value_baht').eq('trade_date', short_date_to_use).execute()
+                short_data = {item['symbol']: item['short_value_baht'] for item in short_result.data if item['short_value_baht'] is not None} if short_result.data else {}
+                short_date = short_date_to_use
+                print(f"📉 Dashboard using Short Sales data from: {short_date_to_use}, found {len(short_data)} symbols")
+        except Exception as e:
+            print(f"⚠️ Error getting Short Sales data for dashboard: {e}")
+        
+        # Build individual stock data using the already-loaded sector data - OPTIMIZED
+        portfolio_stocks = []
+        
+        # Filter symbols based on show_all_symbols parameter
+        symbols_to_process = sorted(stocks_data.keys())
+        if not show_all_symbols:
+            # For portfolio view: only show symbols that are in portfolio_symbols
+            symbols_to_process = [s for s in symbols_to_process if s in portfolio_symbols]
+            print(f"📋 Filtering to portfolio symbols only: {len(symbols_to_process)} symbols")
+        else:
+            print(f"📋 Showing all symbols: {len(symbols_to_process)} symbols")
+        
+        # Use stocks_data already loaded above (no additional query needed)
+        for symbol in symbols_to_process:  # Process filtered symbols
+            stock_info = stocks_data[symbol]
             
-            # Only include symbols that have sector data (price information)
-            # This prevents JSON compliance issues with symbols that only have NVDR/short data
-            for symbol in sorted(stocks_data.keys()):  # Only process symbols with sector data
-                stock_info = stocks_data[symbol]
-                
-                # Skip symbols without valid last_price
-                if not stock_info.get('last_price'):
-                    continue
-                
-                # Parse change and percent_change strings to numbers
-                change_str = stock_info.get('change', '')
-                percent_change_str = stock_info.get('percent_change', '')
-                
-                # Helper function to parse change values
-                def parse_change(value):
-                    if not value or value == '-' or value == '':
+            # Skip symbols without valid last_price
+            if not stock_info.get('last_price'):
+                continue
+            
+            # Parse change and percent_change strings to numbers
+            change_str = stock_info.get('change', '')
+            percent_change_str = stock_info.get('percent_change', '')
+            
+            # Helper function to parse change values
+            def parse_change(value):
+                if not value or value == '-' or value == '':
+                    return 0
+                try:
+                    # Remove + sign and convert to float
+                    cleaned = str(value).replace('+', '').replace(',', '').strip()
+                    if cleaned == '-' or cleaned == '':
                         return 0
-                    try:
-                        # Remove + sign and convert to float
-                        cleaned = str(value).replace('+', '').replace(',', '').strip()
-                        if cleaned == '-' or cleaned == '':
-                            return 0
-                        result = float(cleaned)
-                        # Check for invalid float values
-                        import math
-                        if math.isnan(result) or math.isinf(result):
-                            return 0
-                        return result
-                    except (ValueError, TypeError) as e:
+                    result = float(cleaned)
+                    # Check for invalid float values
+                    import math
+                    if math.isnan(result) or math.isinf(result):
                         return 0
-                
-                def parse_percent(value):
-                    if not value or value == '-' or value == '':
+                    return result
+                except (ValueError, TypeError) as e:
+                    return 0
+            
+            def parse_percent(value):
+                if not value or value == '-' or value == '':
+                    return 0
+                try:
+                    # Remove % sign and + sign, then convert to float
+                    cleaned = str(value).replace('%', '').replace('+', '').replace(',', '').strip()
+                    if cleaned == '-' or cleaned == '':
                         return 0
-                    try:
-                        # Remove % sign and + sign, then convert to float
-                        cleaned = str(value).replace('%', '').replace('+', '').replace(',', '').strip()
-                        if cleaned == '-' or cleaned == '':
-                            return 0
-                        result = float(cleaned)
-                        # Check for invalid float values
-                        import math
-                        if math.isnan(result) or math.isinf(result):
-                            return 0
-                        return result
-                    except (ValueError, TypeError) as e:
+                    result = float(cleaned)
+                    # Check for invalid float values
+                    import math
+                    if math.isnan(result) or math.isinf(result):
                         return 0
-                
-                portfolio_stocks.append({
-                    'symbol': symbol,
-                    'close': stock_info.get('last_price', 0),
-                    'change': parse_change(change_str),
-                    'percent_change': parse_percent(percent_change_str),
-                    'sector': stock_info.get('sector', ''),
-                    'nvdr': nvdr_data.get(symbol, 0) if nvdr_data.get(symbol) else 0,  # Keep in Baht
-                    'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,  # Keep in Baht
+                    return result
+                except (ValueError, TypeError) as e:
+                    return 0
+            
+            portfolio_stocks.append({
+                'symbol': symbol,
+                'close': stock_info.get('last_price', 0),
+                'change': parse_change(change_str),
+                'percent_change': parse_percent(percent_change_str),
+                'sector': stock_info.get('sector', ''),
+                'nvdr': nvdr_data.get(symbol, 0) if nvdr_data.get(symbol) else 0,  # Keep in Baht
+                'shortBaht': short_data.get(symbol, 0) if short_data.get(symbol) else 0,  # Keep in Baht
                 })
         
         # Validate JSON compliance before returning
@@ -2096,9 +2236,17 @@ async def get_portfolio_summary():
         except Exception as e:
             print(f"⚠️ Error getting Short Sales totals for summary: {e}")
         
-        # Calculate average price
-        prices_result = db.client.table('sector_data').select('last_price').eq('trade_date', latest_trade_date).execute()
-        prices = [item['last_price'] for item in prices_result.data if item['last_price'] is not None] if prices_result.data else []
+        # Calculate average price with fallback for zero/missing prices
+        prices_result = db.client.table('sector_data').select('symbol, last_price').eq('trade_date', latest_trade_date).execute()
+        all_symbols = [item['symbol'] for item in prices_result.data] if prices_result.data else []
+        
+        if all_symbols:
+            # Get fallback data for symbols with zero/missing prices
+            enhanced_data = get_latest_available_price_data(db, all_symbols, latest_trade_date)
+            prices = [enhanced_data[symbol].get('last_price', 0) for symbol in all_symbols if enhanced_data.get(symbol, {}).get('last_price', 0) > 0]
+        else:
+            prices = []
+        
         avg_price = sum(prices) / len(prices) if prices else 0
         
         return JSONResponse(content={
@@ -2186,9 +2334,8 @@ async def get_my_portfolio():
         
         portfolio_stocks = []
         if latest_trade_date:
-            # Get stock data for portfolio symbols
-            stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', latest_trade_date).execute()
-            stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+            # Get stock data for portfolio symbols with fallback for zero/missing prices
+            stocks_data = get_latest_available_price_data(db, portfolio_symbols, latest_trade_date)
             
             # Get latest available dates for each data source
             nvdr_date = None
@@ -2397,10 +2544,6 @@ async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
         # Get portfolio holdings for the date
         holdings = db.get_portfolio_holdings_with_persistence(parsed_date)
         
-        # Use the specified trade_date for all data sources (historical data lookup)
-        target_date = parsed_date.isoformat()
-        print(f"📅 Holdings endpoint using specified date for all data: {target_date}")
-        
         # Get portfolio symbols
         portfolio_symbols = db.get_portfolio_symbols()
         portfolio_data = []
@@ -2408,11 +2551,48 @@ async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
         nvdr_dates_used = {}
         short_dates_used = {}
         
+        # Determine the target date for stock data
+        # If requesting today's date, use the latest available data instead of exact date
+        from datetime import date as date_type
+        today = date_type.today()
+        
+        if parsed_date == today:
+            # For today's date, get the latest available data from sector_data
+            print(f"📅 Holdings endpoint: Today requested, using latest available data")
+            try:
+                latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                if latest_sector_result.data:
+                    target_date = latest_sector_result.data[0]['trade_date']
+                    print(f"📅 Using latest available sector data date: {target_date}")
+                else:
+                    target_date = parsed_date.isoformat()
+                    print(f"📅 No sector data available, using requested date: {target_date}")
+            except Exception as e:
+                print(f"⚠️ Error getting latest sector date: {e}")
+                target_date = parsed_date.isoformat()
+        else:
+            # For historical dates, use the exact date requested
+            target_date = parsed_date.isoformat()
+            print(f"📅 Holdings endpoint using specified historical date: {target_date}")
+        
         # OPTIMIZED: Batch queries to get all data at once instead of N+1 queries
         
-        # 1. Get ALL stock data for portfolio symbols in one query
-        stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
-        stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+        # 1. Get ALL stock data for portfolio symbols with fallback for zero/missing prices
+        stocks_data = get_latest_available_price_data(db, portfolio_symbols, target_date)
+        
+        # 1.5. If no data found for portfolio symbols, get ALL symbols data as fallback
+        if not stocks_data:
+            print(f"⚠️ No sector data found for portfolio symbols on {target_date}, fetching all symbols data as fallback")
+            all_stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).execute()
+            if all_stocks_result.data:
+                # Create a lookup table for all symbols
+                all_stocks_lookup = {item['symbol']: item for item in all_stocks_result.data}
+                # Only keep data for portfolio symbols
+                stocks_data = {symbol: all_stocks_lookup.get(symbol, {}) for symbol in portfolio_symbols}
+                print(f"📊 Found {len([s for s in stocks_data.values() if s])} portfolio symbols in all symbols data")
+            else:
+                print(f"⚠️ No sector data available for any symbols on {target_date}")
+                stocks_data = {}
         
         # 2. Get ALL NVDR data for target date in one query
         nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net, trade_date').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
@@ -2622,19 +2802,52 @@ async def export_portfolio_csv(portfolio_date: str = None):
         # Get portfolio holdings for the date
         raw_holdings = db.get_portfolio_holdings_with_persistence(parsed_date)
         
-        # Use the specified portfolio_date for all data sources (historical data lookup)
-        target_date = parsed_date.isoformat()
-        print(f"📅 CSV export using specified date for all data: {target_date}")
-        
         # Get portfolio symbols
         portfolio_symbols = db.get_portfolio_symbols()
         holdings = []
         
+        # Determine the target date for stock data
+        # If requesting today's date, use the latest available data instead of exact date
+        from datetime import date as date_type
+        today = date_type.today()
+        
+        if parsed_date == today:
+            # For today's date, get the latest available data from sector_data
+            print(f"📅 CSV export: Today requested, using latest available data")
+            try:
+                latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                if latest_sector_result.data:
+                    target_date = latest_sector_result.data[0]['trade_date']
+                    print(f"📅 Using latest available sector data date: {target_date}")
+                else:
+                    target_date = parsed_date.isoformat()
+                    print(f"📅 No sector data available, using requested date: {target_date}")
+            except Exception as e:
+                print(f"⚠️ Error getting latest sector date: {e}")
+                target_date = parsed_date.isoformat()
+        else:
+            # For historical dates, use the exact date requested
+            target_date = parsed_date.isoformat()
+            print(f"📅 CSV export using specified historical date: {target_date}")
+        
         # OPTIMIZED: Batch queries for CSV export
         
-        # 1. Get ALL stock data for portfolio symbols in one query
-        stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
-        stocks_data = {item['symbol']: item for item in stocks_result.data} if stocks_result.data else {}
+        # 1. Get ALL stock data for portfolio symbols with fallback for zero/missing prices
+        stocks_data = get_latest_available_price_data(db, portfolio_symbols, target_date)
+        
+        # 1.5. If no data found for portfolio symbols, get ALL symbols data as fallback
+        if not stocks_data:
+            print(f"⚠️ CSV export: No sector data found for portfolio symbols on {target_date}, fetching all symbols data as fallback")
+            all_stocks_result = db.client.table('sector_data').select('symbol, last_price, sector, change, percent_change').eq('trade_date', target_date).execute()
+            if all_stocks_result.data:
+                # Create a lookup table for all symbols
+                all_stocks_lookup = {item['symbol']: item for item in all_stocks_result.data}
+                # Only keep data for portfolio symbols
+                stocks_data = {symbol: all_stocks_lookup.get(symbol, {}) for symbol in portfolio_symbols}
+                print(f"📊 CSV export: Found {len([s for s in stocks_data.values() if s])} portfolio symbols in all symbols data")
+            else:
+                print(f"⚠️ CSV export: No sector data available for any symbols on {target_date}")
+                stocks_data = {}
         
         # 2. Get ALL NVDR data for the specified date in one query
         nvdr_result = db.client.table('nvdr_trading').select('symbol, value_net').eq('trade_date', target_date).in_('symbol', portfolio_symbols).execute()
