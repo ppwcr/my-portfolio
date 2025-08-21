@@ -2243,7 +2243,11 @@ async def get_portfolio_summary():
         if all_symbols:
             # Get fallback data for symbols with zero/missing prices
             enhanced_data = get_latest_available_price_data(db, all_symbols, latest_trade_date)
-            prices = [enhanced_data[symbol].get('last_price', 0) for symbol in all_symbols if enhanced_data.get(symbol, {}).get('last_price', 0) > 0]
+            prices = []
+            for symbol in all_symbols:
+                price = enhanced_data.get(symbol, {}).get('last_price')
+                if price is not None and price > 0:
+                    prices.append(price)
         else:
             prices = []
         
