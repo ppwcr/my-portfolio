@@ -359,7 +359,7 @@ class ProperDatabaseManager:
             print(f"✅ DEBUG: Inserted {inserted_count} {sector_name} sector records into database")
             
             # Update timestamp (only for the first sector to avoid duplicates)
-            if trade_date and sector_name == 'SET':  # Use SET as the primary sector for timestamp
+            if trade_date and sector_name == 'agro':  # Use agro as the primary sector for timestamp (first alphabetically)
                 self.update_data_timestamp('sector_data', trade_date, inserted_count)
             
             # Verify GRAND was actually inserted

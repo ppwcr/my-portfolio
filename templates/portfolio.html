@@ -132,6 +132,19 @@
             </div>
         </section>
 
+        <!-- Data Timestamps Section -->
+        <section id="data-timestamps" class="bg-white/80 rounded-2xl shadow p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-lg font-semibold">📅 Data Source Timestamps</h2>
+                <button id="refresh-timestamps-btn" class="px-3 py-1 rounded-lg shadow bg-blue-100 text-blue-700 text-sm">
+                    Refresh
+                </button>
+            </div>
+            <div id="timestamps-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div class="text-center text-sm text-gray-500">Loading timestamps...</div>
+            </div>
+        </section>
+
         <!-- Database Update Status -->
         <section id="db-progress" class="bg-white/80 rounded-2xl shadow p-4 hidden">
             <div class="flex items-center gap-2 mb-2">
@@ -726,6 +739,17 @@
             }
         }
 
+        async function fetchDataTimestamps() {
+            try {
+                const response = await fetch('/api/data/timestamps');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error fetching data timestamps:', error);
+                return null;
+            }
+        }
+
         async function fetchSummaryData(dashboardData) {
             // Use the dedicated summary API endpoint that has proper fallback logic
             try {
@@ -963,6 +987,68 @@
                     <div class="text-xs opacity-50">M.Baht</div>
                 </div>
             `;
+        }
+
+        function renderDataTimestamps(timestampsData) {
+            const container = document.getElementById('timestamps-content');
+            if (!timestampsData || !timestampsData.success || !timestampsData.timestamps) {
+                container.innerHTML = '<div class="col-span-full text-center text-sm text-gray-500">Failed to load timestamps</div>';
+                return;
+            }
+
+            const timestamps = timestampsData.timestamps;
+            const lastUpdated = timestampsData.last_updated;
+
+            // Define display names and icons for each data source
+            const sourceConfig = {
+                'sector_data': { name: 'Sector Data', icon: '📊', color: 'blue' },
+                'investor_summary': { name: 'Investor Summary', icon: '👥', color: 'green' },
+                'nvdr_trading': { name: 'NVDR Trading', icon: '💼', color: 'purple' },
+                'short_sales_trading': { name: 'Short Sales', icon: '📉', color: 'red' },
+                'set_index': { name: 'SET Index', icon: '📈', color: 'orange' }
+            };
+
+            container.innerHTML = Object.entries(timestamps).map(([source, info]) => {
+                const config = sourceConfig[source] || { name: source, icon: '📋', color: 'gray' };
+                const tradeDate = info.latest_trade_date || 'N/A';
+                const recordCount = info.record_count || 0;
+                const updatedAt = info.updated_at ? new Date(info.updated_at).toLocaleString() : 'N/A';
+                const status = info.status || 'unknown';
+
+                return `
+                    <div class="bg-gradient-to-br from-${config.color}-50 to-${config.color}-100 border border-${config.color}-200 rounded-xl p-3">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-lg">${config.icon}</span>
+                            <h3 class="font-semibold text-sm">${config.name}</h3>
+                        </div>
+                        <div class="space-y-1 text-xs">
+                            <div class="flex justify-between">
+                                <span class="opacity-70">Trade Date:</span>
+                                <span class="font-medium">${tradeDate}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="opacity-70">Records:</span>
+                                <span class="font-medium">${recordCount.toLocaleString()}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="opacity-70">Status:</span>
+                                <span class="font-medium ${status === 'active' ? 'text-green-600' : 'text-yellow-600'}">${status}</span>
+                            </div>
+                            <div class="text-xs opacity-60 mt-2 pt-2 border-t border-${config.color}-200">
+                                Updated: ${updatedAt}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Update the last updated timestamp
+            if (lastUpdated) {
+                const lastUpdatedEl = document.getElementById('status-timestamp');
+                if (lastUpdatedEl) {
+                    lastUpdatedEl.textContent = `Last updated: ${new Date(lastUpdated).toLocaleString()}`;
+                }
+            }
         }
 
         function renderInvestorSummary(investorData, dateDates) {
@@ -1600,11 +1686,12 @@
         async function refreshFromDatabase() {
             try {
                 // Load existing data from database only - show ALL symbols for the main table
-                const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, portfolioData, setIndexData, setIndexChartData, timestampsData] = await Promise.all([
                     fetchDashboardData(null, true), // Show all symbols
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
-                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
+                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null),
+                    fetchDataTimestamps()
                 ]);
                 
                 // Calculate summary from dashboard data
@@ -1622,6 +1709,10 @@
                 
                 if (setIndexChartData && setIndexChartData.series && setIndexChartData.series.length > 0) {
                     renderSetIndexChart(setIndexChartData);
+                }
+                
+                if (timestampsData && timestampsData.success) {
+                    renderDataTimestamps(timestampsData);
                 }
                 
                 // Hide loading state
@@ -1799,10 +1890,11 @@
                 console.log('🚀 Loading portfolio from database...');
                 
                 // Load existing data immediately from database
-                const [dashboardData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, setIndexData, setIndexChartData, timestampsData] = await Promise.all([
                     fetchDashboardData(null, true), // Show all symbols
                     fetchSetIndexData(),
-                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
+                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null),
+                    fetchDataTimestamps()
                 ]);
                 
                 // Calculate summary from dashboard data
@@ -1824,6 +1916,11 @@
                 // Render SET index chart immediately if data is available
                 if (setIndexChartData && setIndexChartData.series && setIndexChartData.series.length > 0) {
                     renderSetIndexChart(setIndexChartData);
+                }
+                
+                // Render timestamps data
+                if (timestampsData && timestampsData.success) {
+                    renderDataTimestamps(timestampsData);
                 }
                 
                 // Portfolio data will be loaded after available dates are fetched
@@ -1859,11 +1956,12 @@
         // Function to refresh data after background update
         async function refreshDataAfterUpdate() {
             try {
-                const [dashboardData, portfolioData, setIndexData, setIndexChartData] = await Promise.all([
+                const [dashboardData, portfolioData, setIndexData, setIndexChartData, timestampsData] = await Promise.all([
                     fetchDashboardData(null, true), // Show all symbols
                     fetchMyPortfolio(),
                     fetchSetIndexData(),
-                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null)
+                    fetch('/api/series/set-index').then(res => res.json()).catch(() => null),
+                    fetchDataTimestamps()
                 ]);
                 
                 // Calculate summary from dashboard data
@@ -1880,6 +1978,10 @@
                 
                 if (setIndexChartData && setIndexChartData.series && setIndexChartData.series.length > 0) {
                     renderSetIndexChart(setIndexChartData);
+                }
+                
+                if (timestampsData && timestampsData.success) {
+                    renderDataTimestamps(timestampsData);
                 }
                 
             } catch (error) {
@@ -2886,6 +2988,13 @@
                         // Wait a moment for database to be updated, then refresh display
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         await refreshFromDatabase();
+                        // Also refresh timestamps specifically
+                        try {
+                            const timestampsData = await fetchDataTimestamps();
+                            renderDataTimestamps(timestampsData);
+                        } catch (error) {
+                            console.error('Error refreshing timestamps after scrape:', error);
+                        }
                         ctrl.finish(true);
                     } else {
                         console.error('❌ Fresh scrape failed:', result.message);
@@ -2912,6 +3021,24 @@
                     refreshMyPortfolio();
                 });
             }
+
+            // Refresh timestamps functionality
+            document.getElementById('refresh-timestamps-btn').addEventListener('click', async () => {
+                const btn = document.getElementById('refresh-timestamps-btn');
+                try {
+                    btn.disabled = true;
+                    btn.textContent = 'Refreshing…';
+                    
+                    const timestampsData = await fetchDataTimestamps();
+                    renderDataTimestamps(timestampsData);
+                    
+                } catch (error) {
+                    console.error('Error refreshing timestamps:', error);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = 'Refresh';
+                }
+            });
 
             // Refresh SET index functionality
             document.getElementById('refresh-index-btn').addEventListener('click', async () => {
