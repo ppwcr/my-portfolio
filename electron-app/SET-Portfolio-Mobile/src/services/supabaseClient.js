@@ -2,8 +2,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Supabase credentials for SET Portfolio Mobile App
-const SUPABASE_URL = 'https://dnaxnvxuhzsmkapjguwb.supabase.co';
-const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRuYXhudnh1aHpzbWthcGpndXdiIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTQwNDc5MSwiZXhwIjoyMDcwOTgwNzkxfQ.sW9MBvYiEDWarshySYzThmJe9GKn09orVxsNrVe_i8c';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'your_supabase_project_url';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'your_supabase_service_key';
 
 class SupabaseService {
   constructor() {
