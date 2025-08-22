@@ -1,8 +1,10 @@
 @echo off
-echo Starting Portfolio Dashboard Server...
+echo Starting Portfolio Dashboard Server with Auto-Scraper...
 echo.
-echo This will start the server on http://127.0.0.1:8000
-echo Press Ctrl+C to stop the server
+echo This will start:
+echo - Web server on http://0.0.0.0:8000 (accessible from network)
+echo - Auto-scraper that runs every 10 minutes
+echo Press Ctrl+C to stop both services
 echo.
 
 REM Check if Python is installed
@@ -27,6 +29,18 @@ if errorlevel 1 (
     )
 )
 
+REM Check if auto-scraper dependencies are installed
+pip show schedule >nul 2>&1
+if errorlevel 1 (
+    echo Installing auto-scraper dependencies...
+    pip install schedule psutil
+    if errorlevel 1 (
+        echo Error: Failed to install auto-scraper dependencies
+        pause
+        exit /b 1
+    )
+)
+
 REM Check if playwright is installed
 echo Checking Playwright...
 playwright --version >nul 2>&1
@@ -41,12 +55,36 @@ if errorlevel 1 (
 echo.
 echo Starting server...
 echo.
+REM Get the local IP address
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
+    set LOCAL_IP=%%a
+    goto :found_ip
+)
+:found_ip
+set LOCAL_IP=%LOCAL_IP: =%
+
+echo.
+echo ========================================
+echo Server will be accessible at:
+echo Local:  http://127.0.0.1:8000
+echo Network: http://%LOCAL_IP%:8000
+echo.
+echo Auto-Scraper will:
+echo - Scrape sector and SET index data every 10 minutes
+echo - Clean up old data automatically
+echo - Update web interface when new data arrives
+echo ========================================
+echo.
+
+echo Starting auto-scraper in background...
+start /min python auto_scraper.py
+
 echo Opening browser in 3 seconds...
 timeout /t 3 /nobreak >nul
 
 REM Start the server in background and open browser
 start "" http://127.0.0.1:8000/portfolio
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 pause
 
