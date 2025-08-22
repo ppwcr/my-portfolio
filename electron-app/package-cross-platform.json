@@ -12,7 +12,10 @@
     "build-win-installer": "electron-builder --win nsis",
     "build-win-on-mac": "electron-builder --win --mac",
     "dist": "npm run build-win",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "publish": "node publish-update.js",
+    "publish-win": "electron-builder --win --publish=always",
+    "test-update": "node test-auto-update.js"
   },
   "keywords": [
     "electron",
@@ -34,7 +37,8 @@
   "dependencies": {
     "child_process": "^1.0.2",
     "path": "^0.12.7",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "electron-updater": "^6.1.7"
   },
   "build": {
     "appId": "com.setportfolio.desktop",
@@ -42,6 +46,14 @@
     "directories": {
       "output": "dist-cross-platform"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ppwcr",
+        "repo": "my-portfolio",
+        "private": false
+      }
+    ],
     "files": [
       "main-windows.js",
       "preload.js",

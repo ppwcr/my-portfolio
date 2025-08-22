@@ -97,6 +97,11 @@ class ProperDatabaseManager:
             # Insert to investor_summary table
             result = self.client.table('investor_summary').insert(records).execute()
             print(f"✅ Saved {len(records)} investor summary records")
+            
+            # Update timestamp
+            if trade_date:
+                self.update_data_timestamp('investor_summary', trade_date, len(records))
+            
             return True
             
         except Exception as e:
@@ -187,6 +192,11 @@ class ProperDatabaseManager:
             # Insert to nvdr_trading table
             result = self.client.table('nvdr_trading').insert(records).execute()
             print(f"✅ Saved {len(records)} NVDR trading records")
+            
+            # Update timestamp
+            if actual_trade_date:
+                self.update_data_timestamp('nvdr_trading', actual_trade_date, len(records))
+            
             return True
             
         except Exception as e:
@@ -288,6 +298,11 @@ class ProperDatabaseManager:
             # Insert to short_sales_trading table
             result = self.client.table('short_sales_trading').insert(records).execute()
             print(f"✅ Saved {len(records)} Short Sales trading records")
+            
+            # Update timestamp
+            if actual_trade_date:
+                self.update_data_timestamp('short_sales_trading', actual_trade_date, len(records))
+            
             return True
             
         except Exception as e:
@@ -342,6 +357,10 @@ class ProperDatabaseManager:
             result = self.client.table('sector_data').insert(records).execute()
             inserted_count = len(result.data) if result.data else 0
             print(f"✅ DEBUG: Inserted {inserted_count} {sector_name} sector records into database")
+            
+            # Update timestamp (only for the first sector to avoid duplicates)
+            if trade_date and sector_name == 'SET':  # Use SET as the primary sector for timestamp
+                self.update_data_timestamp('sector_data', trade_date, inserted_count)
             
             # Verify GRAND was actually inserted
             if sector_name == 'service' and grand_found:
@@ -453,6 +472,9 @@ class ProperDatabaseManager:
             
             saved_count = len(result.data) if result.data else len(records)
             print(f"✅ Saved {saved_count} SET index records for {trade_date}")
+            
+            # Update timestamp
+            self.update_data_timestamp('set_index', trade_date, saved_count)
             
             return {
                 "status": "success", 
@@ -738,6 +760,81 @@ class ProperDatabaseManager:
         except Exception as e:
             print(f"❌ Error deleting portfolio holding: {e}")
             return False
+    
+    def update_data_timestamp(self, data_source: str, trade_date: date, record_count: int = 0, status: str = 'active', error_message: str = None) -> bool:
+        """Update the latest timestamp for a data source"""
+        try:
+            from datetime import datetime
+            
+            update_data = {
+                'latest_trade_date': trade_date.isoformat(),
+                'latest_created_at': datetime.now().isoformat(),
+                'record_count': record_count,
+                'status': status,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            if error_message:
+                update_data['error_message'] = error_message
+            
+            # Try to update existing record first, if it fails, insert new one
+            try:
+                result = self.client.table('data_timestamps').update(update_data).eq('data_source', data_source).execute()
+                if not result.data:
+                    # No existing record found, insert new one
+                    result = self.client.table('data_timestamps').insert({
+                        'data_source': data_source,
+                        **update_data
+                    }).execute()
+            except Exception as e:
+                # If update fails, try insert
+                result = self.client.table('data_timestamps').insert({
+                    'data_source': data_source,
+                    **update_data
+                }).execute()
+            
+            print(f"✅ Updated timestamp for {data_source}: {trade_date} ({record_count} records)")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error updating timestamp for {data_source}: {e}")
+            return False
+    
+    def get_latest_data_timestamps(self) -> dict:
+        """Get the latest timestamps for all data sources"""
+        try:
+            result = self.client.table('data_timestamps').select('*').eq('status', 'active').execute()
+            
+            timestamps = {}
+            if result.data:
+                for item in result.data:
+                    timestamps[item['data_source']] = {
+                        'latest_trade_date': item['latest_trade_date'],
+                        'latest_created_at': item['latest_created_at'],
+                        'record_count': item['record_count'],
+                        'status': item['status'],
+                        'updated_at': item['updated_at']
+                    }
+            
+            return timestamps
+            
+        except Exception as e:
+            print(f"❌ Error getting latest timestamps: {e}")
+            return {}
+    
+    def get_latest_trade_date(self, data_source: str) -> str:
+        """Get the latest trade date for a specific data source"""
+        try:
+            result = self.client.table('data_timestamps').select('latest_trade_date').eq('data_source', data_source).eq('status', 'active').execute()
+            
+            if result.data and len(result.data) > 0:
+                return result.data[0]['latest_trade_date']
+            else:
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error getting latest trade date for {data_source}: {e}")
+            return None
 
 
 def get_proper_db():

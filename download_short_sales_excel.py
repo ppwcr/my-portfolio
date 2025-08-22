@@ -16,6 +16,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Optional
+from datetime import datetime, date
 
 from playwright.sync_api import sync_playwright, Page, Browser, Download
 
@@ -251,6 +252,12 @@ Examples:
         help="Run in headful mode (default: headless)"
     )
     
+    parser.add_argument(
+        "--save-db",
+        action="store_true",
+        help="Save data to database after download"
+    )
+    
     args = parser.parse_args()
     
     setup_logging()
@@ -262,6 +269,30 @@ Examples:
             no_sandbox=args.no_sandbox,
             headful=args.headful
         )
+        
+        # Save to database if requested and download was successful
+        if exit_code == 0 and args.save_db:
+            try:
+                from dotenv import load_dotenv
+                load_dotenv()
+                
+                from supabase_database import get_proper_db
+                
+                logging.info("💾 Saving to database...")
+                db = get_proper_db()
+                
+                # Save to database (let the function extract actual date from Excel)
+                success = db.save_short_sales_trading(args.out, None)
+                
+                if success:
+                    logging.info("✅ Database: Short Sales data saved successfully")
+                else:
+                    logging.error("❌ Database: Failed to save Short Sales data")
+                    
+            except Exception as db_error:
+                logging.error(f"❌ Database save failed: {str(db_error)}")
+                # Don't fail the whole operation if database save fails
+        
         sys.exit(exit_code)
     except KeyboardInterrupt:
         logging.info("Download cancelled by user")

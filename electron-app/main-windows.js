@@ -1,10 +1,12 @@
-const { app, BrowserWindow, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, Menu, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const axios = require('axios');
+const AutoUpdaterService = require('./auto-updater');
 
 let mainWindow;
 let pythonProcess;
+let autoUpdater;
 const isDev = process.argv.includes('--dev');
 const SERVER_PORT = 8000; // Use the same port as your main.py
 const SERVER_URL = `http://localhost:${SERVER_PORT}`;
@@ -238,6 +240,37 @@ function createWindow() {
       ]
     },
     {
+      label: 'Updates',
+      submenu: [
+        {
+          label: 'Check for Updates',
+          click: () => {
+            if (autoUpdater) {
+              autoUpdater.checkForUpdates();
+            }
+          }
+        },
+        {
+          label: 'Download Update',
+          enabled: false,
+          click: () => {
+            if (autoUpdater && autoUpdater.isUpdateAvailable()) {
+              autoUpdater.downloadUpdate();
+            }
+          }
+        },
+        {
+          label: 'Install Update',
+          enabled: false,
+          click: () => {
+            if (autoUpdater && autoUpdater.isUpdateDownloaded()) {
+              autoUpdater.installUpdate();
+            }
+          }
+        }
+      ]
+    },
+    {
       label: 'View',
       submenu: [
         { role: 'reload' },
@@ -312,6 +345,11 @@ app.whenReady().then(async () => {
   try {
     console.log('Starting SET Portfolio Manager...');
     
+    // Initialize auto-updater (only in production)
+    if (!isDev) {
+      autoUpdater = new AutoUpdaterService();
+    }
+    
     // Start Python server first
     await startPythonServer();
     console.log('Python server started successfully');
@@ -322,6 +360,16 @@ app.whenReady().then(async () => {
     // Create window and load the app
     createWindow();
     mainWindow.loadURL(SERVER_URL);
+    
+    // Set main window for auto-updater
+    if (autoUpdater) {
+      autoUpdater.setMainWindow(mainWindow);
+      
+      // Check for updates after app is ready (with delay)
+      setTimeout(() => {
+        autoUpdater.checkForUpdates();
+      }, 10000); // Check after 10 seconds
+    }
     
   } catch (error) {
     console.error('Failed to start application:', error);

@@ -15,6 +15,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from datetime import date
 
 import requests
 from bs4 import BeautifulSoup
@@ -51,6 +52,12 @@ Examples:
         type=int,
         default=30,
         help="Timeout in seconds (default: 30)"
+    )
+    
+    parser.add_argument(
+        "--save-db",
+        action="store_true",
+        help="Save data to database after scraping"
     )
     
     return parser.parse_args()
@@ -91,14 +98,19 @@ def extract_table_from_markdown(content: str) -> Optional[Dict[str, Any]]:
     """Extract table data from Jina.ai markdown format - following VBA logic."""
     lines = split_to_lines(content)
     
-    # Find "As of" date
+    # Find "As of" date and parse it
     as_of = ""
+    trade_date = None
     for line in lines:
         if line.lower().startswith("as of"):
             as_of = line[6:].strip()
+            # Parse the date to extract actual trade date
+            trade_date = parse_as_of_date(as_of)
             break
     
     print(f"As of: {as_of}")
+    if trade_date:
+        print(f"📅 Parsed trade date: {trade_date}")
     
     # Find the big 16-column header row (like VBA)
     header_idx = -1
@@ -168,6 +180,7 @@ def extract_table_from_markdown(content: str) -> Optional[Dict[str, Any]]:
             "headers": headers,
             "rows": rows,
             "as_of": as_of,
+            "trade_date": trade_date,
             "daily_lbl": daily_lbl,
             "mtd_lbl": mtd_lbl,
             "ytd_lbl": ytd_lbl
@@ -210,6 +223,34 @@ def find_label_row_above(lines: List[str], header_idx: int) -> tuple:
                 return cells[-3], cells[-2], cells[-1]  # Last 3 cells
     
     return "Daily", "Month-to-Date", "Year-to-Date"
+
+
+def parse_as_of_date(as_of: str) -> Optional[date]:
+    """Parse 'As of' date string to date object"""
+    if not as_of:
+        return None
+    
+    try:
+        from datetime import datetime
+        # Try different formats
+        formats = [
+            "%d %b %Y",      # "21 Aug 2025"
+            "%d %B %Y",      # "21 August 2025"
+            "%B %d, %Y",     # "August 21, 2025"
+            "%Y-%m-%d",      # "2025-08-21"
+        ]
+        
+        for fmt in formats:
+            try:
+                return datetime.strptime(as_of.strip(), fmt).date()
+            except ValueError:
+                continue
+        
+        print(f"⚠️ Could not parse date: {as_of}")
+        return None
+    except Exception as e:
+        print(f"⚠️ Date parsing error: {e}")
+        return None
 
 
 def to_num(s: str) -> float:
@@ -350,8 +391,75 @@ def main():
         # Extract table data
         table_data = extract_table_from_html(html_content)
         if table_data:
+            # Save CSV file
             save_csv(table_data, args.out_table)
             print("Scraping completed successfully!")
+            
+            # Save to database if requested
+            if args.save_db:
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv()
+                    
+                    from supabase_database import get_proper_db
+                    import pandas as pd
+                    
+                    print("💾 Saving to database...")
+                    db = get_proper_db()
+                    
+                    # Convert to DataFrame
+                    df = pd.DataFrame(table_data["rows"], columns=table_data["headers"])
+                    
+                    # Check if we have data (market might be closed)
+                    if len(df) == 0:
+                        print("⚠️ No data found - market might be closed")
+                        # Get latest available date from database
+                        latest_date_str = db.get_latest_trade_date("investor_summary")
+                        if latest_date_str:
+                            from datetime import datetime
+                            try:
+                                trade_date = datetime.strptime(latest_date_str, "%Y-%m-%d").date()
+                                print(f"📅 Using latest available date from database: {trade_date}")
+                            except ValueError:
+                                from datetime import date
+                                trade_date = date.today()
+                                print(f"⚠️ Invalid date format from database, using today: {trade_date}")
+                        else:
+                            from datetime import date
+                            trade_date = date.today()
+                            print(f"⚠️ No previous data found, using today: {trade_date}")
+                    else:
+                        # Use detected trade date or fall back to today
+                        detected_date = table_data.get("trade_date")
+                        if detected_date:
+                            # Convert string date back to date object if needed
+                            if isinstance(detected_date, str):
+                                from datetime import datetime
+                                try:
+                                    trade_date = datetime.strptime(detected_date, "%Y-%m-%d").date()
+                                except ValueError:
+                                    from datetime import date
+                                    trade_date = date.today()
+                                    print(f"⚠️ Invalid date format, using today: {trade_date}")
+                            else:
+                                trade_date = detected_date
+                        else:
+                            from datetime import date
+                            trade_date = date.today()
+                            print(f"⚠️ No trade date detected, using today: {trade_date}")
+                    
+                    # Save to database
+                    success = db.save_investor_summary(df, trade_date)
+                    
+                    if success:
+                        print(f"✅ Database: Saved investor data for {trade_date}")
+                    else:
+                        print("❌ Database: Failed to save investor data")
+                        
+                except Exception as db_error:
+                    print(f"❌ Database save failed: {str(db_error)}")
+                    # Don't fail the whole operation if database save fails
+            
         else:
             print("ERROR: No table data found")
             sys.exit(2)

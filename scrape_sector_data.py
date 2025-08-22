@@ -20,6 +20,7 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from urllib.parse import urlparse
+from datetime import datetime, date
 
 import httpx
 from bs4 import BeautifulSoup
@@ -140,14 +141,49 @@ class SETSectorScraper:
                             clean_value = value.replace(",", "")
                             if field == "percent_change":
                                 clean_value = clean_value.replace("%", "")
-                            metrics[field] = float(clean_value)
+                            metrics[field] = str(float(clean_value))  # Convert back to string for consistency
                         except ValueError:
                             metrics[field] = value
+                    elif field == "timestamp_hint":
+                        metrics[field] = value
+                        # Try to parse the timestamp to get actual trade date
+                        trade_date = self.parse_timestamp_to_date(value)
+                        if trade_date:
+                            metrics["trade_date"] = str(trade_date)  # Convert to string for consistency
                     else:
                         metrics[field] = value
                     break
                     
         return metrics
+    
+    def parse_timestamp_to_date(self, timestamp_str: str) -> Optional[date]:
+        """Parse timestamp string to date object"""
+        if not timestamp_str:
+            return None
+        
+        try:
+            # Try different formats
+            formats = [
+                "%d %b %Y",           # "21 Aug 2025"
+                "%d %B %Y",           # "21 August 2025"
+                "%B %d, %Y",          # "August 21, 2025"
+                "%Y-%m-%d",           # "2025-08-21"
+                "%d/%m/%Y",           # "21/08/2025"
+                "%m/%d/%Y",           # "08/21/2025"
+                "%d %b %Y %H:%M:%S",  # "21 Aug 2025 15:30:00"
+            ]
+            
+            for fmt in formats:
+                try:
+                    return datetime.strptime(timestamp_str.strip(), fmt).date()
+                except ValueError:
+                    continue
+            
+            print(f"⚠️ Could not parse timestamp: {timestamp_str}")
+            return None
+        except Exception as e:
+            print(f"⚠️ Timestamp parsing error: {e}")
+            return None
     
     def parse_markdown_table(self, content: str) -> Optional[List[Dict[str, str]]]:
         """Parse markdown table from content."""
@@ -525,10 +561,92 @@ class SETSectorScraper:
         if not self.args.json_only:
             self.combine_csv_files()
         
+        # Save to database if requested
+        if self.args.save_db and success_count > 0:
+            await self.save_to_database(results)
+        
         # Exit code logic
         if success_count == 0:
             return 2
         return 0
+    
+    async def save_to_database(self, results: List[Dict[str, Any]]):
+        """Save sector data to database"""
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            
+            from supabase_database import get_proper_db
+            import pandas as pd
+            
+            print("\n💾 Saving sector data to database...")
+            db = get_proper_db()
+            
+            saved_count = 0
+            for result in results:
+                if not result.get("table_data") or isinstance(result, Exception):
+                    continue
+                
+                sector = result["sector"]
+                table_data = result["table_data"]
+                metrics = result.get("metrics", {})
+                
+                # Get trade date from metrics or use today
+                detected_date = metrics.get("trade_date")
+                if detected_date:
+                    # Convert string date back to date object if needed
+                    if isinstance(detected_date, str):
+                        try:
+                            trade_date = datetime.strptime(detected_date, "%Y-%m-%d").date()
+                        except ValueError:
+                            trade_date = date.today()
+                            print(f"⚠️ Invalid date format for {sector}, using today: {trade_date}")
+                    else:
+                        trade_date = detected_date
+                else:
+                    trade_date = date.today()
+                    print(f"⚠️ No trade date detected for {sector}, using today: {trade_date}")
+                
+                try:
+                    # Convert table data to DataFrame
+                    df = pd.DataFrame(table_data)
+                    
+                    # Check if we have data (market might be closed)
+                    if len(df) == 0:
+                        print(f"⚠️ No data found for {sector} - market might be closed")
+                        # Get latest available date from database
+                        latest_date_str = db.get_latest_trade_date("sector_data")
+                        if latest_date_str:
+                            try:
+                                trade_date = datetime.strptime(latest_date_str, "%Y-%m-%d").date()
+                                print(f"📅 Using latest available date from database: {trade_date}")
+                            except ValueError:
+                                trade_date = date.today()
+                                print(f"⚠️ Invalid date format from database, using today: {trade_date}")
+                        else:
+                            trade_date = date.today()
+                            print(f"⚠️ No previous data found, using today: {trade_date}")
+                    
+                    # Save to database
+                    success = db.save_sector_data(df, sector, trade_date)
+                    
+                    if success:
+                        saved_count += 1
+                        print(f"✅ Database: Saved {sector} sector data for {trade_date}")
+                    else:
+                        print(f"❌ Database: Failed to save {sector} sector data")
+                        
+                except Exception as sector_error:
+                    print(f"❌ Database save failed for {sector}: {str(sector_error)}")
+            
+            if saved_count > 0:
+                print(f"✅ Database: Successfully saved {saved_count} sectors")
+            else:
+                print("❌ Database: No sectors were saved")
+                
+        except Exception as db_error:
+            print(f"❌ Database integration failed: {str(db_error)}")
+            # Don't fail the whole operation if database save fails
     
     def combine_csv_files(self):
         """Combine all sector CSV files into a single CSV with category column."""
@@ -563,7 +681,8 @@ class SETSectorScraper:
                 
                 # Add all data rows
                 for row in reader:
-                    all_rows.append([row[field] for field in fieldnames])
+                    if fieldnames:  # Check if fieldnames is not None
+                        all_rows.append([row[field] for field in fieldnames])
         
         # Write combined CSV
         combined_file = self.outdir / "combined_set_constituents.csv"
@@ -589,6 +708,7 @@ def main():
     parser.add_argument("--csv-delimiter", default=",", help="CSV delimiter (default: ,)")
     parser.add_argument("--save-raw", action="store_true", help="Save raw response body")
     parser.add_argument("--json-only", action="store_true", help="Skip CSV if no table detected")
+    parser.add_argument("--save-db", action="store_true", help="Save data to database after scraping")
     
     args = parser.parse_args()
     

@@ -1170,17 +1170,13 @@ async def save_to_database(download_fresh: bool = False):
         result = subprocess.run([
             sys.executable, "download_nvdr_excel.py", 
             "--out", f"_out/nvdr_{timestamp}.xlsx", 
-            "--timeout", "90000"
+            "--timeout", "90000",
+            "--save-db"
         ], capture_output=True, text=True, timeout=120)
         
         if result.returncode == 0:
-            print("✅ NVDR download completed")
-            # Save to database
-            nvdr_files = list(Path("_out").glob("nvdr_*.xlsx"))
-            if nvdr_files:
-                latest_nvdr = max(nvdr_files, key=lambda x: x.stat().st_mtime)
-                results["nvdr_data"] = db.save_nvdr_trading(str(latest_nvdr), None)
-                print("✅ NVDR data saved to database")
+            print("✅ NVDR download completed and saved to database")
+            results["nvdr_data"] = True
         else:
             print(f"❌ NVDR download failed: {result.stderr}")
         
@@ -1189,17 +1185,13 @@ async def save_to_database(download_fresh: bool = False):
         result = subprocess.run([
             sys.executable, "download_short_sales_excel.py",
             "--out", f"_out/short_sales_{timestamp}.xlsx",
-            "--timeout", "90000"
+            "--timeout", "90000",
+            "--save-db"
         ], capture_output=True, text=True, timeout=120)
         
         if result.returncode == 0:
-            print("✅ Short Sales download completed")
-            # Save to database
-            short_files = list(Path("_out").glob("short_sales_*.xlsx"))
-            if short_files:
-                latest_short = max(short_files, key=lambda x: x.stat().st_mtime)
-                results["short_sales_data"] = db.save_short_sales_trading(str(latest_short), None)
-                print("✅ Short Sales data saved to database")
+            print("✅ Short Sales download completed and saved to database")
+            results["short_sales_data"] = True
         else:
             print(f"❌ Short Sales download failed: {result.stderr}")
         
@@ -1903,33 +1895,50 @@ async def get_portfolio_dashboard(response: Response, trade_date: str = Query(No
                 'short': trade_date
             }
         else:
-            # Get the latest available date for each data type separately
+            # Get the latest available date for each data type from the registered timestamps
             latest_dates = {'sector': None, 'investor': None, 'nvdr': None, 'short': None}
             target_trade_date = None
             
             try:
-                # Get latest sector_data date
-                sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if sector_result.data:
-                    latest_dates['sector'] = sector_result.data[0]['trade_date']
-                    target_trade_date = latest_dates['sector']  # Use sector date as primary
+                # Get latest dates from the data_timestamps table
+                timestamps = db.get_latest_data_timestamps()
                 
-                # Get latest investor_summary date
-                investor_result = db.client.table('investor_summary').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if investor_result.data:
-                    latest_dates['investor'] = investor_result.data[0]['trade_date']
-                
-                # Get latest nvdr_trading date
-                nvdr_result = db.client.table('nvdr_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if nvdr_result.data:
-                    latest_dates['nvdr'] = nvdr_result.data[0]['trade_date']
-                
-                # Get latest short_sales_trading date
-                short_result = db.client.table('short_sales_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if short_result.data:
-                    latest_dates['short'] = short_result.data[0]['trade_date']
+                if timestamps:
+                    latest_dates['sector'] = timestamps.get('sector_data', {}).get('latest_trade_date')
+                    latest_dates['investor'] = timestamps.get('investor_summary', {}).get('latest_trade_date')
+                    latest_dates['nvdr'] = timestamps.get('nvdr_trading', {}).get('latest_trade_date')
+                    latest_dates['short'] = timestamps.get('short_sales_trading', {}).get('latest_trade_date')
                     
-                print(f"📅 Dashboard using dates: sector={latest_dates['sector']}, investor={latest_dates['investor']}, nvdr={latest_dates['nvdr']}, short={latest_dates['short']}")
+                    # Use sector date as primary target date
+                    target_trade_date = latest_dates['sector']
+                    
+                    print(f"📅 Dashboard using registered timestamps: sector={latest_dates['sector']}, investor={latest_dates['investor']}, nvdr={latest_dates['nvdr']}, short={latest_dates['short']}")
+                else:
+                    # Fallback to old method if timestamps table doesn't exist
+                    print("⚠️ No registered timestamps found, falling back to direct table queries")
+                    
+                    # Get latest sector_data date
+                    sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if sector_result.data:
+                        latest_dates['sector'] = sector_result.data[0]['trade_date']
+                        target_trade_date = latest_dates['sector']  # Use sector date as primary
+                    
+                    # Get latest investor_summary date
+                    investor_result = db.client.table('investor_summary').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if investor_result.data:
+                        latest_dates['investor'] = investor_result.data[0]['trade_date']
+                    
+                    # Get latest nvdr_trading date
+                    nvdr_result = db.client.table('nvdr_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if nvdr_result.data:
+                        latest_dates['nvdr'] = nvdr_result.data[0]['trade_date']
+                    
+                    # Get latest short_sales_trading date
+                    short_result = db.client.table('short_sales_trading').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if short_result.data:
+                        latest_dates['short'] = short_result.data[0]['trade_date']
+                        
+                    print(f"📅 Dashboard using fallback dates: sector={latest_dates['sector']}, investor={latest_dates['investor']}, nvdr={latest_dates['nvdr']}, short={latest_dates['short']}")
             except Exception as e:
                 print(f"⚠️ Error getting latest dates: {e}")
         
@@ -2201,9 +2210,12 @@ async def get_portfolio_summary():
     try:
         db = get_proper_db()
         
-        # Get latest trade date for sector data
-        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-        latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        # Get latest trade date for sector data from registered timestamps
+        latest_trade_date = db.get_latest_trade_date('sector_data')
+        if not latest_trade_date:
+            # Fallback to direct query if timestamps table doesn't exist
+            sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+            latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
         
         if not latest_trade_date:
             return JSONResponse(content={'error': 'No data available'})
@@ -2332,9 +2344,12 @@ async def get_my_portfolio():
                 'portfolio_stocks': []
             })
         
-        # Get latest trade date
-        sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-        latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
+        # Get latest trade date from registered timestamps
+        latest_trade_date = db.get_latest_trade_date('sector_data')
+        if not latest_trade_date:
+            # Fallback to direct query if timestamps table doesn't exist
+            sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+            latest_trade_date = sector_result.data[0]['trade_date'] if sector_result.data else None
         
         portfolio_stocks = []
         if latest_trade_date:
@@ -2561,16 +2576,22 @@ async def get_portfolio_holdings_for_date(trade_date: str = Query(...)):
         today = date_type.today()
         
         if parsed_date == today:
-            # For today's date, get the latest available data from sector_data
+            # For today's date, get the latest available data from registered timestamps
             print(f"📅 Holdings endpoint: Today requested, using latest available data")
             try:
-                latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if latest_sector_result.data:
-                    target_date = latest_sector_result.data[0]['trade_date']
+                latest_trade_date = db.get_latest_trade_date('sector_data')
+                if latest_trade_date:
+                    target_date = latest_trade_date
                     print(f"📅 Using latest available sector data date: {target_date}")
                 else:
-                    target_date = parsed_date.isoformat()
-                    print(f"📅 No sector data available, using requested date: {target_date}")
+                    # Fallback to direct query if timestamps table doesn't exist
+                    latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if latest_sector_result.data:
+                        target_date = latest_sector_result.data[0]['trade_date']
+                        print(f"📅 Using fallback latest sector data date: {target_date}")
+                    else:
+                        target_date = parsed_date.isoformat()
+                        print(f"📅 No sector data available, using requested date: {target_date}")
             except Exception as e:
                 print(f"⚠️ Error getting latest sector date: {e}")
                 target_date = parsed_date.isoformat()
@@ -2816,16 +2837,22 @@ async def export_portfolio_csv(portfolio_date: str = None):
         today = date_type.today()
         
         if parsed_date == today:
-            # For today's date, get the latest available data from sector_data
+            # For today's date, get the latest available data from registered timestamps
             print(f"📅 CSV export: Today requested, using latest available data")
             try:
-                latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
-                if latest_sector_result.data:
-                    target_date = latest_sector_result.data[0]['trade_date']
+                latest_trade_date = db.get_latest_trade_date('sector_data')
+                if latest_trade_date:
+                    target_date = latest_trade_date
                     print(f"📅 Using latest available sector data date: {target_date}")
                 else:
-                    target_date = parsed_date.isoformat()
-                    print(f"📅 No sector data available, using requested date: {target_date}")
+                    # Fallback to direct query if timestamps table doesn't exist
+                    latest_sector_result = db.client.table('sector_data').select('trade_date').order('trade_date', desc=True).limit(1).execute()
+                    if latest_sector_result.data:
+                        target_date = latest_sector_result.data[0]['trade_date']
+                        print(f"📅 Using fallback latest sector data date: {target_date}")
+                    else:
+                        target_date = parsed_date.isoformat()
+                        print(f"📅 No sector data available, using requested date: {target_date}")
             except Exception as e:
                 print(f"⚠️ Error getting latest sector date: {e}")
                 target_date = parsed_date.isoformat()
@@ -2955,6 +2982,29 @@ async def export_portfolio_csv(portfolio_date: str = None):
             raise HTTPException(status_code=500, detail="Portfolio holdings table not found. Please create the database table first.")
         else:
             raise HTTPException(status_code=500, detail=f"Error exporting portfolio: {error_msg}")
+
+
+@app.get("/api/data/timestamps")
+async def get_data_timestamps():
+    """Get the latest timestamps for all data sources"""
+    try:
+        db = get_proper_db()
+        timestamps = db.get_latest_data_timestamps()
+        
+        return JSONResponse(content={
+            "success": True,
+            "timestamps": timestamps,
+            "last_updated": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to get data timestamps",
+                "message": str(e)
+            }
+        )
 
 
 @app.post("/api/portfolio/setup-database")

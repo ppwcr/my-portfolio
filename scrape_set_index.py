@@ -88,9 +88,11 @@ def fetch_set_index_data(jina_proxy_url="http://r.jina.ai/"):
         
         # Parse SET timestamp to datetime for other scrapers to use
         set_datetime = None
+        trade_date = None
         if timestamp_match:
             try:
                 set_datetime = datetime.strptime(timestamp_match.group(1), "%d %b %Y %H:%M:%S")
+                trade_date = set_datetime.date()
             except ValueError:
                 pass
         
@@ -98,6 +100,7 @@ def fetch_set_index_data(jina_proxy_url="http://r.jina.ai/"):
             'success': True,
             'data': index_data,
             'timestamp': set_timestamp,
+            'trade_date': trade_date.isoformat() if trade_date else None,
             'set_datetime': set_datetime.isoformat() if set_datetime else None,
             'scraped_at': datetime.now().isoformat()
         }
@@ -160,9 +163,40 @@ def main():
         # Save to database if requested
         if args.save_db:
             try:
+                from dotenv import load_dotenv
+                load_dotenv()
+                
                 from supabase_database import get_proper_db
                 print("💾 Saving to database...")
                 db = get_proper_db()
+                
+                # Check if we have data (market might be closed)
+                if len(data['data']) == 0:
+                    print("⚠️ No data found - market might be closed")
+                    # Get latest available date from database
+                    latest_date_str = db.get_latest_trade_date("set_index")
+                    if latest_date_str:
+                        from datetime import datetime
+                        try:
+                            trade_date = datetime.strptime(latest_date_str, "%Y-%m-%d").date()
+                            print(f"📅 Using latest available date from database: {trade_date}")
+                        except ValueError:
+                            from datetime import date
+                            trade_date = date.today()
+                            print(f"⚠️ Invalid date format from database, using today: {trade_date}")
+                    else:
+                        from datetime import date
+                        trade_date = date.today()
+                        print(f"⚠️ No previous data found, using today: {trade_date}")
+                else:
+                    # Use detected trade date or fall back to today
+                    trade_date = data.get('trade_date')
+                    if not trade_date:
+                        from datetime import date
+                        trade_date = date.today()
+                        print(f"⚠️ No trade date detected, using today: {trade_date}")
+                
+                # Save to database with the determined trade date
                 db_result = db.save_set_index_data(data['data'])
                 print(f"✓ Database: {db_result['message']}")
             except Exception as e:
