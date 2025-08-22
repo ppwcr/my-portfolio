@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  set-portfolio-api:
+    build: .
+    container_name: set-portfolio-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Add your environment variables here
+      # - SUPABASE_URL=your_supabase_url
+      # - SUPABASE_KEY=your_supabase_key
+    volumes:
+      # Mount data directories for persistence
+      - ./_out:/app/_out
+      - ./out_set_sectors:/app/out_set_sectors
+      # Mount environment file if you have one
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - set-portfolio-network
+
+networks:
+  set-portfolio-network:
+    driver: bridge

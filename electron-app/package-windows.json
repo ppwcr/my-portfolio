@@ -1,7 +1,7 @@
 {
-  "name": "set-portfolio-desktop-cross-platform",
+  "name": "set-portfolio-desktop-windows",
   "version": "1.0.0",
-  "description": "Desktop version of SET Portfolio Management App - Cross Platform Build",
+  "description": "Desktop version of SET Portfolio Management App for Windows",
   "main": "main-windows.js",
   "scripts": {
     "start": "electron .",
@@ -10,7 +10,6 @@
     "build-win": "electron-builder --win",
     "build-win-portable": "electron-builder --win portable",
     "build-win-installer": "electron-builder --win nsis",
-    "build-win-on-mac": "electron-builder --win --mac",
     "dist": "npm run build-win",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -21,8 +20,6 @@
     "thailand",
     "set",
     "windows",
-    "mac",
-    "cross-platform",
     "desktop"
   ],
   "author": "SET Portfolio Team",
@@ -40,7 +37,7 @@
     "appId": "com.setportfolio.desktop",
     "productName": "SET Portfolio Manager",
     "directories": {
-      "output": "dist-cross-platform"
+      "output": "dist-windows"
     },
     "files": [
       "main-windows.js",
@@ -95,29 +92,6 @@
     },
     "portable": {
       "artifactName": "SET-Portfolio-Manager-Portable.exe"
-    },
-    "mac": {
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.finance",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": ["x64", "arm64"]
-        },
-        {
-          "target": "zip",
-          "arch": ["x64", "arm64"]
-        }
-      ]
-    },
-    "dmg": {
-      "title": "SET Portfolio Manager",
-      "icon": "assets/icon.icns",
-      "background": "assets/dmg-background.png",
-      "window": {
-        "width": 540,
-        "height": 380
-      }
     },
     "compression": "maximum",
     "removePackageScripts": true,

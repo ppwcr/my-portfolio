@@ -58,3 +58,20 @@ logs/
 
 # Claude Code settings (contains credentials)
 .claude/
+
+# Build artifacts and distributions
+electron-app/dist*/
+distribution/
+*.exe
+*.dmg
+*.app
+*.deb
+*.rpm
+*.snap
+*.AppImage
+*.msi
+*.pkg
+*.dmg
+*.zip
+*.tar.gz
+*.blockmap

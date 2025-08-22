@@ -1,0 +1,82 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Data files (can be mounted as volumes)
+_out/
+out_set_sectors/
+*.xlsx
+*.csv
+
+# Documentation
+*.md
+!README.md
+
+# Mobile and Electron apps (not needed for the main API)
+SET-Portfolio-Mobile/
+electron-app/
+
+# Windows batch files (not needed in container)
+*.bat
+
+# Node.js (if any)
+node_modules/
+npm-debug.log*
+
+# Environment files (should be provided at runtime)
+.env
+.env.local
+.env.production
