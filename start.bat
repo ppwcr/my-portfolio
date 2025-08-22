@@ -3,8 +3,9 @@ echo Starting Portfolio Dashboard Server with Auto-Scraper...
 echo.
 echo This will start:
 echo - Web server on http://0.0.0.0:8000 (accessible from network)
-echo - Auto-scraper that runs every 10 minutes
-echo Press Ctrl+C to stop both services
+echo - Auto-scraper that runs every 10 minutes (sector + SET index)
+echo - Scheduled scraper that runs full updates at 10:30, 13:00, 17:30 (weekdays)
+echo Press Ctrl+C to stop all services
 echo.
 
 REM Check if Python is installed
@@ -73,11 +74,19 @@ echo Auto-Scraper will:
 echo - Scrape sector and SET index data every 10 minutes
 echo - Clean up old data automatically
 echo - Update web interface when new data arrives
+echo.
+echo Scheduled Scraper will:
+echo - Run full updates (all data sources) at 10:30, 13:00, 17:30
+echo - Weekdays only (Monday-Friday)
+echo - Update investor, NVDR, and short sales data
 echo ========================================
 echo.
 
 echo Starting auto-scraper in background...
 start /min python auto_scraper.py
+
+echo Starting scheduled scraper in background...
+start /min python scheduled_scraper.py
 
 echo Opening browser in 3 seconds...
 timeout /t 3 /nobreak >nul

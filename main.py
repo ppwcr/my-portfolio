@@ -3131,27 +3131,40 @@ async def get_auto_scraper_status():
     try:
         import psutil
         
+        auto_scraper_running = False
+        scheduled_scraper_running = False
+        auto_scraper_pid = None
+        scheduled_scraper_pid = None
+        
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if 'auto_scraper.py' in ' '.join(proc.info['cmdline'] or []):
-                    return JSONResponse(content={
-                        "success": True,
-                        "status": "running",
-                        "pid": proc.info['pid']
-                    })
+                cmdline = ' '.join(proc.info['cmdline'] or [])
+                if 'auto_scraper.py' in cmdline:
+                    auto_scraper_running = True
+                    auto_scraper_pid = proc.info['pid']
+                elif 'scheduled_scraper.py' in cmdline:
+                    scheduled_scraper_running = True
+                    scheduled_scraper_pid = proc.info['pid']
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
         
         return JSONResponse(content={
             "success": True,
-            "status": "stopped"
+            "auto_scraper": {
+                "status": "running" if auto_scraper_running else "stopped",
+                "pid": auto_scraper_pid
+            },
+            "scheduled_scraper": {
+                "status": "running" if scheduled_scraper_running else "stopped",
+                "pid": scheduled_scraper_pid
+            }
         })
         
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail={
-                "error": "Failed to get auto-scraper status",
+                "error": "Failed to get scraper status",
                 "message": str(e)
             }
         )
