@@ -1,4 +1,7 @@
 @echo off
+REM Ensure we're in the correct directory
+cd /d "%~dp0"
+echo Current directory: %CD%
 echo Starting Portfolio Dashboard Server with Auto-Scraper...
 echo.
 echo This will start:
@@ -7,6 +10,31 @@ echo - Auto-scraper that runs every 10 minutes (sector + SET index)
 echo - Scheduled scraper that runs full updates at 10:30, 13:00, 17:30 (weekdays)
 echo Press Ctrl+C to stop all services
 echo.
+
+REM Check if we're in the correct directory with required files
+if not exist "main.py" (
+    echo Error: main.py not found in current directory
+    echo Please run this script from the portfolio project directory
+    echo Current directory: %CD%
+    pause
+    exit /b 1
+)
+
+if not exist "auto_scraper.py" (
+    echo Error: auto_scraper.py not found in current directory
+    echo Please run this script from the portfolio project directory
+    echo Current directory: %CD%
+    pause
+    exit /b 1
+)
+
+if not exist "scheduled_scraper.py" (
+    echo Error: scheduled_scraper.py not found in current directory
+    echo Please run this script from the portfolio project directory
+    echo Current directory: %CD%
+    pause
+    exit /b 1
+)
 
 REM Check if Python is installed
 python --version >nul 2>&1
