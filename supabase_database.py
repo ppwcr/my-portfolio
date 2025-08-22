@@ -360,7 +360,11 @@ class ProperDatabaseManager:
             
             # Update timestamp (only for the first sector to avoid duplicates)
             if trade_date and sector_name == 'agro':  # Use agro as the primary sector for timestamp (first alphabetically)
-                self.update_data_timestamp('sector_data', trade_date, inserted_count)
+                # Get total count of all sector records for this trade date
+                total_count_result = self.client.table('sector_data').select('symbol', count='exact').eq('trade_date', trade_date.isoformat()).execute()
+                total_count = total_count_result.count if total_count_result.count is not None else inserted_count
+                print(f"📊 Total sector records for {trade_date}: {total_count}")
+                self.update_data_timestamp('sector_data', trade_date, total_count)
             
             # Verify GRAND was actually inserted
             if sector_name == 'service' and grand_found:
