@@ -41,3 +41,7 @@ cryptography>=3.4.8
 # Additional dependencies for better compatibility
 aiofiles>=23.0.0
 python-dateutil>=2.8.2
+
+# Auto-scraping and scheduling
+schedule>=1.2.0
+psutil>=5.9.0

@@ -1162,6 +1162,7 @@ async def save_to_database(download_fresh: bool = False):
             "nvdr_data": False,
             "short_sales_data": False, 
             "set_index_data": False,
+            "investor_data": False,
             "sector_data": False
         }
         
@@ -1207,37 +1208,29 @@ async def save_to_database(download_fresh: bool = False):
         else:
             print(f"❌ SET index failed: {result.stderr}")
         
-        # 4. Scrape sector data
+        # 4. Scrape investor data
+        print("📥 Manual refresh: Running investor data scraping...")
+        result = subprocess.run([
+            sys.executable, "scrape_investor_data.py", "--save-db"
+        ], capture_output=True, text=True, timeout=60)
+        
+        if result.returncode == 0:
+            results["investor_data"] = True
+            print("✅ Investor data completed and saved")
+        else:
+            print(f"❌ Investor data failed: {result.stderr}")
+        
+        # 5. Scrape sector data
         print("📥 Manual refresh: Running sector data scraping...")
         result = subprocess.run([
             sys.executable, "scrape_sector_data.py", 
-            "--outdir", f"_out/sectors_{timestamp}"
+            "--outdir", f"_out/sectors_{timestamp}",
+            "--save-db"
         ], capture_output=True, text=True, timeout=180)
         
         if result.returncode == 0:
-            print("✅ Sector data scraping completed")
-            # Save sector data to database
-            sector_dirs = list(Path("_out").glob("sectors_*"))
-            if sector_dirs:
-                latest_sectors = max(sector_dirs, key=lambda x: x.stat().st_mtime)
-                
-                # Use today's date for sector data (matching current market data)
-                sector_trade_date = dt.date.today()
-                
-                sector_files = list(latest_sectors.glob("*.constituents.csv"))
-                saved_sectors = 0
-                for sector_file in sector_files:
-                    sector_name = sector_file.stem.replace('.constituents', '')
-                    try:
-                        import pandas as pd
-                        sector_df = pd.read_csv(sector_file)
-                        if db.save_sector_data(sector_df, sector_name, sector_trade_date):
-                            saved_sectors += 1
-                    except Exception as e:
-                        print(f"⚠️ Failed to save sector {sector_name}: {e}")
-                
-                results["sector_data"] = saved_sectors > 0
-                print(f"✅ Sector data saved to database ({saved_sectors} sectors)")
+            print("✅ Sector data scraping completed and saved to database")
+            results["sector_data"] = True
         else:
             print(f"❌ Sector scraping failed: {result.stderr}")
         
@@ -1254,6 +1247,7 @@ async def save_to_database(download_fresh: bool = False):
                 "nvdr_data": "✅ Downloaded and saved" if results["nvdr_data"] else "❌ Failed",
                 "short_sales_data": "✅ Downloaded and saved" if results["short_sales_data"] else "❌ Failed",
                 "set_index_data": "✅ Scraped and saved" if results["set_index_data"] else "❌ Failed",
+                "investor_data": "✅ Scraped and saved" if results["investor_data"] else "❌ Failed",
                 "sector_data": "✅ Scraped and saved" if results["sector_data"] else "❌ Failed"
             },
             "failed_components": [key for key, success in results.items() if not success],
@@ -3002,6 +2996,162 @@ async def get_data_timestamps():
             status_code=500,
             detail={
                 "error": "Failed to get data timestamps",
+                "message": str(e)
+            }
+        )
+
+
+@app.get("/api/data/check-updates")
+async def check_data_updates():
+    """Check if data has been updated recently (for auto-refresh)"""
+    try:
+        notification_file = Path("data_update_notification.txt")
+        
+        if notification_file.exists():
+            # Read the notification file
+            with open(notification_file, "r") as f:
+                content = f.read().strip()
+            
+            # Parse the timestamp
+            try:
+                update_time = datetime.fromisoformat(content.split("Data updated at ")[1])
+                current_time = datetime.now()
+                time_diff = (current_time - update_time).total_seconds()
+                
+                # Return update info if it's recent (within last 15 minutes)
+                if time_diff < 900:  # 15 minutes
+                    return JSONResponse(content={
+                        "success": True,
+                        "has_updates": True,
+                        "last_update": update_time.isoformat(),
+                        "seconds_ago": int(time_diff)
+                    })
+            except Exception:
+                pass
+        
+        return JSONResponse(content={
+            "success": True,
+            "has_updates": False,
+            "last_update": None
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to check data updates",
+                "message": str(e)
+            }
+        )
+
+
+@app.post("/api/auto-scraper/start")
+async def start_auto_scraper():
+    """Start the auto-scraper service"""
+    try:
+        # Check if auto-scraper is already running
+        import psutil
+        auto_scraper_running = False
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if 'auto_scraper.py' in ' '.join(proc.info['cmdline'] or []):
+                    auto_scraper_running = True
+                    break
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        
+        if auto_scraper_running:
+            return JSONResponse(content={
+                "success": True,
+                "message": "Auto-scraper is already running",
+                "status": "running"
+            })
+        
+        # Start auto-scraper in background
+        import subprocess
+        subprocess.Popen([
+            sys.executable, "auto_scraper.py"
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "Auto-scraper started successfully",
+            "status": "started"
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to start auto-scraper",
+                "message": str(e)
+            }
+        )
+
+
+@app.post("/api/auto-scraper/stop")
+async def stop_auto_scraper():
+    """Stop the auto-scraper service"""
+    try:
+        import psutil
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if 'auto_scraper.py' in ' '.join(proc.info['cmdline'] or []):
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                    return JSONResponse(content={
+                        "success": True,
+                        "message": "Auto-scraper stopped successfully",
+                        "status": "stopped"
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired):
+                continue
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "Auto-scraper was not running",
+            "status": "not_running"
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to stop auto-scraper",
+                "message": str(e)
+            }
+        )
+
+
+@app.get("/api/auto-scraper/status")
+async def get_auto_scraper_status():
+    """Get the status of the auto-scraper service"""
+    try:
+        import psutil
+        
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+            try:
+                if 'auto_scraper.py' in ' '.join(proc.info['cmdline'] or []):
+                    return JSONResponse(content={
+                        "success": True,
+                        "status": "running",
+                        "pid": proc.info['pid']
+                    })
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        
+        return JSONResponse(content={
+            "success": True,
+            "status": "stopped"
+        })
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to get auto-scraper status",
                 "message": str(e)
             }
         )

@@ -111,6 +111,14 @@
                 <button id="export-btn" class="px-3 py-2 rounded-xl shadow bg-white text-sm" title="Export My Portfolio table to CSV">
                     Export My Portfolio CSV
                 </button>
+                <div class="flex gap-1">
+                    <button id="auto-scraper-start-btn" class="px-3 py-2 rounded-xl shadow bg-green-100 text-green-700 text-sm">
+                        Start Auto-Scrape
+                    </button>
+                    <button id="auto-scraper-stop-btn" class="px-3 py-2 rounded-xl shadow bg-red-100 text-red-700 text-sm hidden">
+                        Stop Auto-Scrape
+                    </button>
+                </div>
             </div>
         </header>
 
@@ -3200,6 +3208,139 @@
             });
 
         });
+
+        // Auto-refresh functionality
+        let autoRefreshInterval = null;
+        let autoScraperStatus = 'stopped';
+
+        // Check for data updates every 30 seconds
+        async function checkForUpdates() {
+            try {
+                const response = await fetch('/api/data/check-updates');
+                const data = await response.json();
+                
+                if (data.success && data.has_updates) {
+                    console.log(`🔄 Data updated ${data.seconds_ago} seconds ago, refreshing...`);
+                    
+                    // Show notification
+                    showNotification(`🔄 New data available! Refreshing dashboard...`, 'info');
+                    
+                    // Refresh all data
+                    await refreshFromDatabase();
+                    await fetchDataTimestamps();
+                    await renderDataTimestamps(timestampsData);
+                }
+            } catch (error) {
+                console.error('Error checking for updates:', error);
+            }
+        }
+
+        // Auto-scraper controls
+        async function startAutoScraper() {
+            try {
+                const response = await fetch('/api/auto-scraper/start', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    autoScraperStatus = 'running';
+                    document.getElementById('auto-scraper-start-btn').classList.add('hidden');
+                    document.getElementById('auto-scraper-stop-btn').classList.remove('hidden');
+                    showNotification('🤖 Auto-scraper started! Data will update every 10 minutes.', 'success');
+                    
+                    // Start checking for updates
+                    if (!autoRefreshInterval) {
+                        autoRefreshInterval = setInterval(checkForUpdates, 30000); // Check every 30 seconds
+                    }
+                } else {
+                    showNotification('❌ Failed to start auto-scraper', 'error');
+                }
+            } catch (error) {
+                console.error('Error starting auto-scraper:', error);
+                showNotification('❌ Error starting auto-scraper', 'error');
+            }
+        }
+
+        async function stopAutoScraper() {
+            try {
+                const response = await fetch('/api/auto-scraper/stop', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    autoScraperStatus = 'stopped';
+                    document.getElementById('auto-scraper-start-btn').classList.remove('hidden');
+                    document.getElementById('auto-scraper-stop-btn').classList.add('hidden');
+                    showNotification('🛑 Auto-scraper stopped', 'info');
+                    
+                    // Stop checking for updates
+                    if (autoRefreshInterval) {
+                        clearInterval(autoRefreshInterval);
+                        autoRefreshInterval = null;
+                    }
+                } else {
+                    showNotification('❌ Failed to stop auto-scraper', 'error');
+                }
+            } catch (error) {
+                console.error('Error stopping auto-scraper:', error);
+                showNotification('❌ Error stopping auto-scraper', 'error');
+            }
+        }
+
+        async function checkAutoScraperStatus() {
+            try {
+                const response = await fetch('/api/auto-scraper/status');
+                const data = await response.json();
+                
+                if (data.success) {
+                    autoScraperStatus = data.status;
+                    if (data.status === 'running') {
+                        document.getElementById('auto-scraper-start-btn').classList.add('hidden');
+                        document.getElementById('auto-scraper-stop-btn').classList.remove('hidden');
+                        
+                        // Start checking for updates if not already running
+                        if (!autoRefreshInterval) {
+                            autoRefreshInterval = setInterval(checkForUpdates, 30000);
+                        }
+                    } else {
+                        document.getElementById('auto-scraper-start-btn').classList.remove('hidden');
+                        document.getElementById('auto-scraper-stop-btn').classList.add('hidden');
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking auto-scraper status:', error);
+            }
+        }
+
+        // Notification function
+        function showNotification(message, type = 'info') {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 max-w-sm ${
+                type === 'success' ? 'bg-green-500 text-white' :
+                type === 'error' ? 'bg-red-500 text-white' :
+                'bg-blue-500 text-white'
+            }`;
+            notification.textContent = message;
+            
+            // Add to page
+            document.body.appendChild(notification);
+            
+            // Remove after 5 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 5000);
+        }
+
+        // Event listeners for auto-scraper controls
+        document.getElementById('auto-scraper-start-btn').addEventListener('click', startAutoScraper);
+        document.getElementById('auto-scraper-stop-btn').addEventListener('click', stopAutoScraper);
+
+        // Check auto-scraper status on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            checkAutoScraperStatus();
+        });
+
     </script>
 </body>
 </html>
