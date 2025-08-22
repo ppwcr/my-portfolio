@@ -12,12 +12,11 @@ This system automatically scrapes data every 10 minutes and keeps your web dashb
 
 ## 📊 What Gets Scraped
 
-Every 10 minutes, the auto-scraper runs these scripts:
-1. `scrape_investor_data.py` - Investor summary data
-2. `scrape_sector_data.py` - SET sector constituents
-3. `scrape_set_index.py` - SET index data
-4. `download_nvdr_excel.py` - NVDR trading data
-5. `download_short_sales_excel.py` - Short sales data
+Every 10 minutes, the auto-scraper runs these core market data scripts:
+1. `scrape_sector_data.py` - SET sector constituents (real-time market data)
+2. `scrape_set_index.py` - SET index data (real-time market data)
+
+**Note**: Investor summary, NVDR, and short sales data are not auto-scraped as they are typically updated less frequently. Use the "Run Fresh Scrape" button to manually update all data sources when needed.
 
 ## 🗄️ Database Optimization
 
@@ -25,6 +24,7 @@ The auto-scraper automatically cleans up old data to save database space:
 - **Keeps**: Today's and yesterday's data
 - **Deletes**: Data older than 2 days
 - **Result**: Only the latest data for each date is preserved
+- **Focus**: Only cleans up sector_data and set_index tables (the ones being auto-scraped)
 
 ## 🌐 Web Interface Controls
 

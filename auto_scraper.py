@@ -60,13 +60,11 @@ def cleanup_old_data():
         # Get current date
         today = date.today()
         
-        # Clean up old data for each table
+        # Clean up old data for core market data tables
+        # Focus on tables that are updated by the auto-scraper
         tables_to_clean = [
             'sector_data',
-            'investor_summary', 
-            'set_index',
-            'nvdr_trading',
-            'short_sales_trading'
+            'set_index'
         ]
         
         for table in tables_to_clean:
@@ -90,19 +88,17 @@ def cleanup_old_data():
         logger.error(f"💥 Error in cleanup: {e}")
 
 def auto_scrape():
-    """Main auto-scraping function"""
-    logger.info("🚀 Starting auto-scrape cycle...")
+    """Main auto-scraping function - focuses on core market data (sector and SET index)"""
+    logger.info("🚀 Starting auto-scrape cycle for core market data...")
     
     # Create timestamp for this run
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Run all scraping scripts with --save-db flag
+    # Run core market data scraping scripts with --save-db flag
+    # Focus on sector and SET index data that change frequently during trading hours
     scripts = [
-        ("scrape_investor_data.py", ["--save-db"]),
         ("scrape_sector_data.py", ["--save-db"]),
-        ("scrape_set_index.py", ["--save-db"]),
-        ("download_nvdr_excel.py", ["--save-db"]),
-        ("download_short_sales_excel.py", ["--save-db"])
+        ("scrape_set_index.py", ["--save-db"])
     ]
     
     success_count = 0
@@ -115,7 +111,7 @@ def auto_scrape():
     # Clean up old data
     cleanup_old_data()
     
-    logger.info(f"📊 Auto-scrape completed: {success_count}/{total_scripts} scripts successful")
+    logger.info(f"📊 Auto-scrape completed: {success_count}/{total_scripts} core market data scripts successful")
     
     # Trigger web page refresh notification
     trigger_web_refresh()
